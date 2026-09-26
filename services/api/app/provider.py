@@ -5,6 +5,7 @@ import os
 import urllib.request
 import asyncio
 import sys
+import re
 from pathlib import Path
 from .models import CourseDraft, Evidence, MindMapNode, ScheduleItem, TranscriptSegment
 
@@ -83,6 +84,52 @@ class LocalCourseProvider(MockCourseProvider):
 
     async def caption_audio(self, path: Path, sequence: int) -> TranscriptSegment:
         return await asyncio.to_thread(self._caption, path, sequence)
+
+    async def finalize(self, transcript: list[TranscriptSegment], course: str) -> CourseDraft:
+        meaningful = [s for s in transcript if s.source != "[未识别到清晰语音]" and len(s.source.strip()) > 1]
+        if not meaningful:
+            return CourseDraft(summary="本次录音没有识别到足够清晰的课堂内容。",
+                pending_confirmation=["请检查录音收声后重新整理。"],
+                mindmap=[MindMapNode(id="root", label=course)])
+
+        def clean(text: str) -> str:
+            return re.sub(r"\s+", " ", text).strip(" ,.;，。；")
+
+        translated = [clean(s.translation) for s in meaningful if clean(s.translation)]
+        unique = []
+        for text in translated:
+            if len(text) >= 3 and text not in unique:
+                unique.append(text)
+        key_points = unique[:8]
+        summary_text = "；".join(key_points[:4])
+        summary = f"本次 {course} 课程主要记录：{summary_text}。" if summary_text else f"本次 {course} 录音已完成转写。"
+
+        schedule = []
+        pending = []
+        task_pattern = re.compile(r"\b(submit|deadline|due|assignment|homework|class|meet|presentation)\b", re.I)
+        date_pattern = re.compile(r"\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|next\s+\w+|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?)\b", re.I)
+        previous_task = None
+        for segment in meaningful:
+            if not task_pattern.search(segment.source):
+                continue
+            kind = "ddl" if re.search(r"submit|deadline|due|assignment|homework", segment.source, re.I) else "class"
+            item_id = f"{kind}-{segment.id}"
+            correction = bool(re.search(r"\b(correction|actually|instead|not\s+.+but)\b", segment.source, re.I))
+            evidence = [Evidence(segment_id=segment.id, start_ms=segment.start_ms, end_ms=segment.end_ms, quote=segment.source)]
+            schedule.append(ScheduleItem(id=item_id, kind="correction" if correction else kind,
+                title=clean(segment.translation) or clean(segment.source), datetime=None,
+                status="pending_confirmation", evidence=evidence,
+                supersedes=previous_task if correction else None))
+            if not correction:
+                previous_task = item_id
+            dates = date_pattern.findall(segment.source)
+            if dates:
+                pending.append(f"“{dates[-1]}”缺少可验证的完整日期，请确认。")
+
+        nodes = [MindMapNode(id="root", label=course)]
+        nodes += [MindMapNode(id=f"point-{i+1}", label=text[:80], parent_id="root") for i, text in enumerate(key_points[:8])]
+        return CourseDraft(summary=summary, key_points=key_points, schedule=schedule,
+            mindmap=nodes, pending_confirmation=list(dict.fromkeys(pending)))
 
 
 def get_provider():

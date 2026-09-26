@@ -58,3 +58,17 @@ def test_rejects_bad_hash_and_missing_consent(tmp_path, monkeypatch):
     response = client.post(f"/api/sessions/{created['id']}/audio-parts?sequence=0&sha256=bad", files={"audio":("p.webm", b"x")})
     assert response.status_code == 422
 
+
+def test_local_finalize_uses_actual_transcript(monkeypatch):
+    from services.api.app.models import TranscriptSegment
+    from services.api.app.provider import LocalCourseProvider
+    provider = LocalCourseProvider.__new__(LocalCourseProvider)
+    transcript = [
+        TranscriptSegment(id="seg-1", start_ms=0, end_ms=2000, source="We discussed documentary ethics.", translation="我们讨论了纪录片伦理。"),
+        TranscriptSegment(id="seg-2", start_ms=2000, end_ms=4000, source="Submit the essay next Friday.", translation="请在下周五提交论文。"),
+    ]
+    draft = __import__("asyncio").run(provider.finalize(transcript, "Film Studies"))
+    assert "纪录片伦理" in draft.summary
+    assert draft.key_points == ["我们讨论了纪录片伦理", "请在下周五提交论文"]
+    assert draft.schedule[0].evidence[0].segment_id == "seg-2"
+    assert draft.pending_confirmation

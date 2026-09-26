@@ -21,11 +21,14 @@ function wavBlob(samples: Float32Array, inputRate: number): Blob {
 
 export async function startPcmCapture(stream:MediaStream,onChunk:(blob:Blob)=>Promise<void>,onLevel:(level:number)=>void):Promise<CaptureController>{
   const context=new AudioContext(); const source=context.createMediaStreamSource(stream); const processor=context.createScriptProcessor(4096,1,1);
-  const silent=context.createGain(); silent.gain.value=0; const frames:Float32Array[]=[]; let samples=0; let stopping=false;
+  const silent=context.createGain(); silent.gain.value=0; const frames:Float32Array[]=[]; let samples=0; let stopping=false;let hasVoice=false;let silentSamples=0;
   source.connect(processor);processor.connect(silent);silent.connect(context.destination);
-  const flush=async()=>{if(!samples)return;const merged=new Float32Array(samples);let offset=0;for(const frame of frames){merged.set(frame,offset);offset+=frame.length}frames.length=0;samples=0;await onChunk(wavBlob(merged,context.sampleRate))};
+  const flush=async()=>{if(!samples)return;const merged=new Float32Array(samples);let offset=0;for(const frame of frames){merged.set(frame,offset);offset+=frame.length}frames.length=0;samples=0;hasVoice=false;silentSamples=0;await onChunk(wavBlob(merged,context.sampleRate))};
   processor.onaudioprocess=event=>{if(stopping)return;const frame=new Float32Array(event.inputBuffer.getChannelData(0));frames.push(frame);samples+=frame.length;
-    let energy=0;for(const x of frame)energy+=x*x;onLevel(Math.min(100,Math.sqrt(energy/frame.length)*500));if(samples>=context.sampleRate*3)void flush()};
+    let energy=0;for(const x of frame)energy+=x*x;const rms=Math.sqrt(energy/frame.length);onLevel(Math.min(100,rms*500));
+    if(rms>.008){hasVoice=true;silentSamples=0}else if(hasVoice)silentSamples+=frame.length;
+    if((hasVoice&&silentSamples>=context.sampleRate*.6&&samples>=context.sampleRate*.8)||samples>=context.sampleRate*4){
+      if(hasVoice)void flush();else{frames.length=0;samples=0;silentSamples=0}
+    }};
   return {stop:async()=>{stopping=true;processor.disconnect();source.disconnect();silent.disconnect();await flush();await context.close()}};
 }
-
