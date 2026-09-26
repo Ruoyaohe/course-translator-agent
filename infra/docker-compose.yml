@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment: {POSTGRES_USER: ntu, POSTGRES_PASSWORD: ntu-local, POSTGRES_DB: ntu}
+    volumes: [ntu_pg:/var/lib/postgresql/data]
+    ports: ["5432:5432"]
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address :9001
+    environment: {MINIO_ROOT_USER: ntu, MINIO_ROOT_PASSWORD: ntu-local-secret}
+    ports: ["9000:9000", "9001:9001"]
+    volumes: [ntu_objects:/data]
+volumes: {ntu_pg: {}, ntu_objects: {}}
+

@@ -1,0 +1,5 @@
+interface:
+  display_name: "NTU Course Interpreter"
+  short_description: "整理课堂同传、纪要、脑图并审核发布到 Obsidian"
+  default_prompt: "使用课程 MCP 工具检查当前课程，整理证据明确的纪要与日程，并在我审核后发布。"
+

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ntu-course-agent.local/schemas/course-draft.json",
+  "title": "CourseDraft",
+  "type": "object",
+  "required": ["summary", "key_points", "schedule", "mindmap", "pending_confirmation"],
+  "additionalProperties": false,
+  "properties": {
+    "summary": {"type": "string"},
+    "key_points": {"type": "array", "items": {"type": "string"}},
+    "pending_confirmation": {"type": "array", "items": {"type": "string"}},
+    "schedule": {"type": "array", "items": {"$ref": "#/$defs/schedule"}},
+    "mindmap": {"type": "array", "items": {"$ref": "#/$defs/node"}}
+  },
+  "$defs": {
+    "evidence": {"type": "object", "required": ["segment_id", "start_ms", "end_ms", "quote"], "additionalProperties": false,
+      "properties": {"segment_id": {"type": "string"}, "start_ms": {"type": "integer", "minimum": 0}, "end_ms": {"type": "integer", "minimum": 0}, "quote": {"type": "string"}}},
+    "schedule": {"type": "object", "required": ["id", "kind", "title", "status", "evidence"], "additionalProperties": false,
+      "properties": {"id": {"type": "string"}, "kind": {"enum": ["class", "ddl", "task", "correction"]}, "title": {"type": "string"}, "datetime": {"type": ["string", "null"]}, "status": {"enum": ["confirmed", "pending_confirmation"]}, "owner": {"type": ["string", "null"]}, "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence"}}, "supersedes": {"type": ["string", "null"]}}},
+    "node": {"type": "object", "required": ["id", "label"], "additionalProperties": false,
+      "properties": {"id": {"type": "string"}, "label": {"type": "string"}, "parent_id": {"type": ["string", "null"]}}}
+  }
+}
+

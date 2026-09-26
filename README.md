@@ -1,0 +1,39 @@
+# NTU Course Agent
+
+Mobile-first PWA for classroom recording, English-to-Chinese live captions, evidence-backed notes, mind maps, and reviewed publishing to an Obsidian Git vault.
+
+## Local development
+
+1. Copy `.env.example` to `.env`. Keep `COURSE_PROVIDER=mock` for a credential-free demo.
+2. Start the API:
+
+   ```bash
+   python3 -m venv .venv
+   .venv/bin/pip install -r services/api/requirements.txt
+   .venv/bin/uvicorn services.api.app.main:app --reload --port 8000
+   ```
+
+3. Start the PWA:
+
+   ```bash
+   cd apps/web
+   npm install
+   npm run dev
+   ```
+
+Open `http://localhost:3000`. API documentation is at `http://localhost:8000/docs`.
+
+The mock provider turns uploaded chunks into deterministic example captions and produces a complete reviewable draft. Set `COURSE_PROVIDER=qwen` and configure DashScope variables for the cloud adapter.
+
+## Services
+
+- `apps/web`: installable Next.js PWA with IndexedDB-backed audio chunk queue.
+- `services/api`: session, upload, finalization, review, artifact, and publish API.
+- `services/worker`: retention and background-processing entry points.
+- `services/mcp`: Streamable HTTP MCP surface over the same course workflow.
+- `packages/contracts`: JSON schemas shared with agents and clients.
+- `skills/course-interpreter`: reusable Codex skill for operating the workflow.
+- `infra`: local and Alibaba Cloud deployment foundations.
+
+Publishing writes only after an explicit review action. In local mode the target is a filesystem vault; production uses a checked-out private Git repository and refuses unresolved Git conflicts.
+
