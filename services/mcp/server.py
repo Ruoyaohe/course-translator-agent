@@ -40,6 +40,12 @@ async def course_draft_get(session_id: str):
 
 
 @mcp.tool()
+async def course_draft_generate(session_id: str, idempotency_key: str):
+    """Run the configured Qwen course-note agent over the final transcript and populate REVIEW_DRAFT."""
+    return await request("POST", f"/api/sessions/{session_id}/organize", headers={"Idempotency-Key": idempotency_key})
+
+
+@mcp.tool()
 async def course_draft_update(session_id: str, draft: dict):
     """Replace a draft after user edits; preserve evidence fields."""
     return await request("PATCH", f"/api/sessions/{session_id}/draft", json=draft)
@@ -68,4 +74,3 @@ async def course_session_search(query: str = ""):
 
 if __name__ == "__main__":
     mcp.run(transport="streamable-http")
-

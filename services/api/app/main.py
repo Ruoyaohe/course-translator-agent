@@ -6,6 +6,7 @@ import json
 import os
 import uuid
 from pathlib import Path
+from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, File, Header, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
@@ -16,6 +17,7 @@ from .publish import publish_to_obsidian
 from .render import mermaid, note_markdown, transcript_markdown
 from .store import JsonStore
 
+load_dotenv()
 ROOT = Path(os.environ.get("NTU_DATA_DIR", "./data")).resolve()
 STORE = JsonStore(ROOT / "sessions")
 UPLOADS = ROOT / "uploads"
@@ -138,6 +140,7 @@ async def process_session(session_id: str):
         session.status = SessionStatus.organizing
         session.updated_at = now_iso(); STORE.save(session)
         session.draft = await provider.finalize(session.transcript, session.course)
+        session.draft_source = getattr(provider, "draft_source", "mock")
         session.status = SessionStatus.draft_ready
         session.updated_at = now_iso(); STORE.save(session)
     except Exception as exc:
@@ -161,6 +164,20 @@ async def finish(session_id: str, background_tasks: BackgroundTasks, idempotency
 def events(session_id: str):
     session = load(session_id)
     return {"status": session.status, "updated_at": session.updated_at, "error": session.error}
+
+
+@app.post("/api/sessions/{session_id}/organize", response_model=CourseSession)
+async def organize(session_id: str, background_tasks: BackgroundTasks, idempotency_key: str | None = Header(None)):
+    session = load(session_id)
+    if not session.transcript:
+        raise HTTPException(409, "Transcript is empty")
+    if not ensure_key(session, "organize", idempotency_key):
+        return session
+    session.status = SessionStatus.organizing
+    session.error = None
+    session.updated_at = now_iso(); STORE.save(session)
+    background_tasks.add_task(process_session, session.id)
+    return session
 
 
 @app.patch("/api/sessions/{session_id}/draft", response_model=CourseSession)

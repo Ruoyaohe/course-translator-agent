@@ -12,6 +12,7 @@ from .models import CourseDraft, Evidence, MindMapNode, ScheduleItem, Transcript
 
 class MockCourseProvider:
     captions_from_upload = True
+    draft_source = "mock"
 
     async def live_caption(self, sequence: int) -> TranscriptSegment:
         samples = [
@@ -47,14 +48,18 @@ class QwenCourseProvider(MockCourseProvider):
 
     def __init__(self):
         self.captions_from_upload = False
+        self.draft_source = "qwen_mcp"
         self.api_key = os.environ.get("DASHSCOPE_API_KEY", "")
         self.model = os.environ.get("QWEN_TEXT_MODEL", "qwen3.8-max")
         if not self.api_key:
             raise RuntimeError("DASHSCOPE_API_KEY is required when COURSE_PROVIDER=qwen")
 
-    async def finalize(self, transcript: list[TranscriptSegment], course: str) -> CourseDraft:
+    def _finalize(self, transcript: list[TranscriptSegment], course: str) -> CourseDraft:
         schema = CourseDraft.model_json_schema()
-        prompt = "根据带时间戳的课堂原文生成中文纪要。日期不完整必须标记待确认；所有日程包含证据。"
+        prompt = """你是课程纪要 Agent。根据带时间戳的英文原文和中文译文重新理解并总结课程，不要逐句复制。
+输出简洁中文摘要、经过归纳的知识点、任务/上课/DDL、更正关系、待确认信息和分层脑图。
+任何日期不完整时必须标记 pending_confirmation；不得猜测年月日。每个日程项必须引用输入中真实存在的 segment_id。
+仅返回符合 JSON Schema 的 JSON。"""
         payload = json.dumps({"model": self.model, "messages": [{"role": "system", "content": prompt},
             {"role": "user", "content": json.dumps([s.model_dump() for s in transcript], ensure_ascii=False)}],
             "response_format": {"type": "json_schema", "json_schema": {"name": "course_draft", "strict": True, "schema": schema}}}).encode()
@@ -62,7 +67,18 @@ class QwenCourseProvider(MockCourseProvider):
             data=payload, headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"})
         with urllib.request.urlopen(request, timeout=120) as response:
             data = json.load(response)
-        return CourseDraft.model_validate_json(data["choices"][0]["message"]["content"])
+        draft = CourseDraft.model_validate_json(data["choices"][0]["message"]["content"])
+        segments = {s.id: s for s in transcript}
+        for item in draft.schedule:
+            item.evidence = [Evidence(segment_id=e.segment_id, start_ms=segments[e.segment_id].start_ms,
+                end_ms=segments[e.segment_id].end_ms, quote=segments[e.segment_id].source)
+                for e in item.evidence if e.segment_id in segments]
+            if not item.evidence:
+                item.status = "pending_confirmation"
+        return draft
+
+    async def finalize(self, transcript: list[TranscriptSegment], course: str) -> CourseDraft:
+        return await asyncio.to_thread(self._finalize, transcript, course)
 
 
 class LocalCourseProvider(MockCourseProvider):
@@ -73,6 +89,8 @@ class LocalCourseProvider(MockCourseProvider):
         sys.path.insert(0, str(model_root))
         from engine import Models
         self.models = Models()
+        self.ai = QwenCourseProvider() if os.environ.get("DASHSCOPE_API_KEY") else None
+        self.draft_source = "qwen_mcp" if self.ai else "ai_unconfigured"
 
     def _caption(self, path: Path, sequence: int) -> TranscriptSegment:
         from faster_whisper.audio import decode_audio
@@ -86,6 +104,13 @@ class LocalCourseProvider(MockCourseProvider):
         return await asyncio.to_thread(self._caption, path, sequence)
 
     async def finalize(self, transcript: list[TranscriptSegment], course: str) -> CourseDraft:
+        if self.ai:
+            return await self.ai.finalize(transcript, course)
+        return CourseDraft(summary="尚未配置千问 API Key，AI 纪要未生成。",
+            key_points=[], schedule=[], mindmap=[MindMapNode(id="root", label=course)],
+            pending_confirmation=["请配置 DASHSCOPE_API_KEY 后点击“AI 重新整理”。原始转写已安全保留。"])
+
+    async def finalize_extractively(self, transcript: list[TranscriptSegment], course: str) -> CourseDraft:
         meaningful = [s for s in transcript if s.source != "[未识别到清晰语音]" and len(s.source.strip()) > 1]
         if not meaningful:
             return CourseDraft(summary="本次录音没有识别到足够清晰的课堂内容。",

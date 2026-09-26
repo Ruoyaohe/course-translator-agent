@@ -1,3 +1,5 @@
-mcp[cli]>=1.6,<2
+mcp[cli]==1.30.0
 httpx>=0.28,<1
-
+pydantic==2.13.5
+starlette==0.41.3
+cryptography==46.0.3

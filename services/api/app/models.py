@@ -85,9 +85,9 @@ class CourseSession(BaseModel):
     updated_at: str
     transcript: list[TranscriptSegment] = Field(default_factory=list)
     draft: CourseDraft | None = None
+    draft_source: Literal["qwen_mcp", "local_extract", "mock", "ai_unconfigured"] | None = None
     parts: list[int] = Field(default_factory=list)
     idempotency: dict[str, str] = Field(default_factory=dict)
     error: str | None = None
     published_path: str | None = None
     git_commit: str | None = None
-
