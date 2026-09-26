@@ -1,6 +1,6 @@
 .env
 .env.local
-.venv/
+.venv*/
 node_modules/
 .next/
 __pycache__/
@@ -13,4 +13,3 @@ artifacts/
 *.webm
 *.wav
 *.mp3
-

@@ -86,14 +86,15 @@ async def upload_part(session_id: str, sequence: int, sha256: str, audio: Upload
         raise HTTPException(422, "SHA-256 mismatch")
     folder = UPLOADS / session.id
     folder.mkdir(parents=True, exist_ok=True)
-    target = folder / f"{sequence:08d}.webm"
+    suffix = ".wav" if audio.content_type == "audio/wav" else ".webm"
+    target = folder / f"{sequence:08d}{suffix}"
     if not target.exists():
         target.write_bytes(payload)
     if sequence not in session.parts:
         session.parts = sorted([*session.parts, sequence])
     caption = next((item for item in session.transcript if item.id == f"seg-{sequence:04d}"), None)
     if caption is None and getattr(provider, "captions_from_upload", False):
-        caption = await provider.live_caption(sequence)
+        caption = await provider.caption_audio(target, sequence)
         session.transcript.append(caption)
         session.transcript.sort(key=lambda item: item.start_ms)
     session.updated_at = now_iso()

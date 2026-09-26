@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 import os
 import urllib.request
+import asyncio
+import sys
+from pathlib import Path
 from .models import CourseDraft, Evidence, MindMapNode, ScheduleItem, TranscriptSegment
 
 
@@ -19,6 +22,9 @@ class MockCourseProvider:
         start = sequence * 5000
         return TranscriptSegment(id=f"seg-{sequence:04d}", start_ms=start, end_ms=start + 4500,
                                  source=source, translation=translation)
+
+    async def caption_audio(self, path: Path, sequence: int) -> TranscriptSegment:
+        return await self.live_caption(sequence)
 
     async def finalize(self, transcript: list[TranscriptSegment], course: str) -> CourseDraft:
         if not transcript:
@@ -58,5 +64,31 @@ class QwenCourseProvider(MockCourseProvider):
         return CourseDraft.model_validate_json(data["choices"][0]["message"]["content"])
 
 
+class LocalCourseProvider(MockCourseProvider):
+    captions_from_upload = True
+
+    def __init__(self):
+        model_root = Path(os.environ.get("LOCAL_MODEL_ROOT", "../ntu-live-test")).resolve()
+        sys.path.insert(0, str(model_root))
+        from engine import Models
+        self.models = Models()
+
+    def _caption(self, path: Path, sequence: int) -> TranscriptSegment:
+        from faster_whisper.audio import decode_audio
+        audio = decode_audio(str(path), sampling_rate=16000)
+        source, translation, _, _ = self.models.process(audio)
+        start = sequence * 3000
+        return TranscriptSegment(id=f"seg-{sequence:04d}", start_ms=start, end_ms=start + 3000,
+                                 source=source or "[未识别到清晰语音]", translation=translation)
+
+    async def caption_audio(self, path: Path, sequence: int) -> TranscriptSegment:
+        return await asyncio.to_thread(self._caption, path, sequence)
+
+
 def get_provider():
-    return QwenCourseProvider() if os.environ.get("COURSE_PROVIDER", "mock") == "qwen" else MockCourseProvider()
+    name = os.environ.get("COURSE_PROVIDER", "mock")
+    if name == "qwen":
+        return QwenCourseProvider()
+    if name == "local":
+        return LocalCourseProvider()
+    return MockCourseProvider()

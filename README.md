@@ -23,6 +23,8 @@ Mobile-first PWA for classroom recording, English-to-Chinese live captions, evid
 
 Open `http://localhost:3000`. API documentation is at `http://localhost:8000/docs`.
 
+For the existing free local Whisper + English/Chinese models, create a Python 3.11 environment whose site-packages can see `../ntu-live-test/.venv`, install the API requirements, then run `./start-local.command`. The header must show `LOCAL`; `MOCK` means fixed demonstration captions are active.
+
 The mock provider turns uploaded chunks into deterministic example captions and produces a complete reviewable draft. Set `COURSE_PROVIDER=qwen` and configure DashScope variables for the cloud adapter.
 
 ## Services
@@ -36,4 +38,3 @@ The mock provider turns uploaded chunks into deterministic example captions and 
 - `infra`: local and Alibaba Cloud deployment foundations.
 
 Publishing writes only after an explicit review action. In local mode the target is a filesystem vault; production uses a checked-out private Git repository and refuses unresolved Git conflicts.
-

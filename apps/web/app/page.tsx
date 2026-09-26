@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { markUploaded, pendingParts, putPart, sha256, StoredPart } from "../src/storage";
+import { CaptureController, startPcmCapture } from "../src/audio";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 type Segment = { id:string; start_ms:number; end_ms:number; source:string; translation:string };
@@ -26,12 +27,13 @@ export default function Home() {
   const [elapsed,setElapsed]=useState(0); const [level,setLevel]=useState(0); const [uploading,setUploading]=useState(false);
   const [online,setOnline]=useState(true);
   const [transport,setTransport]=useState<"idle"|"connecting"|"live"|"retrying">("idle");
+  const [providerName,setProviderName]=useState("unknown");
   const [user,setUser]=useState<{login:string}|null>(null); const [authReady,setAuthReady]=useState(false);
-  const recorder=useRef<MediaRecorder|null>(null); const stream=useRef<MediaStream|null>(null); const seq=useRef(0);
+  const capture=useRef<CaptureController|null>(null); const stream=useRef<MediaStream|null>(null); const seq=useRef(0);
   const socket=useRef<WebSocket|null>(null); const startAt=useRef(0); const speaking=useRef(false);
   const flushing=useRef(false);
 
-  useEffect(()=>{navigator.serviceWorker?.register("/sw.js").catch(()=>{});api("/auth/me").then(x=>setUser(x.user)).catch(()=>setUser(null)).finally(()=>setAuthReady(true));const sync=()=>setOnline(navigator.onLine);sync();addEventListener("online",sync);addEventListener("offline",sync);return()=>{removeEventListener("online",sync);removeEventListener("offline",sync)}},[]);
+  useEffect(()=>{navigator.serviceWorker?.register("/sw.js").catch(()=>{});api("/health").then(x=>setProviderName(x.provider)).catch(()=>{});api("/auth/me").then(x=>setUser(x.user)).catch(()=>setUser(null)).finally(()=>setAuthReady(true));const sync=()=>setOnline(navigator.onLine);sync();addEventListener("online",sync);addEventListener("offline",sync);return()=>{removeEventListener("online",sync);removeEventListener("offline",sync)}},[]);
   useEffect(()=>{if(online&&session)flushAll(session.id).catch(()=>{})},[online]);
   useEffect(()=>{if(!session||session.status!=="recording")return;const id=setInterval(()=>setElapsed(Date.now()-startAt.current),500);return()=>clearInterval(id)},[session?.status]);
   useEffect(()=>{if(!session||session.status!=="recording")return;const id=setInterval(()=>flushAll(session.id).catch(()=>{}),3000);return()=>clearInterval(id)},[session?.id,session?.status]);
@@ -39,7 +41,7 @@ export default function Home() {
 
   async function flush(part:StoredPart) {
     if(!navigator.onLine)return;
-    const digest=await sha256(part.blob); const form=new FormData(); form.append("audio",part.blob,"part.webm");
+    const digest=await sha256(part.blob); const form=new FormData(); form.append("audio",part.blob,"part.wav");
     const result=await api(`/api/sessions/${part.sessionId}/audio-parts?sequence=${part.sequence}&sha256=${digest}`,{method:"POST",body:form});
     await markUploaded(part);
     setSession(current=>current&&current.id===part.sessionId?{...current,parts:result.received,
@@ -55,17 +57,14 @@ export default function Home() {
       setTransport("connecting");const wsBase=API.replace(/^http/,"ws"); const ws=new WebSocket(`${wsBase}/api/sessions/${created.id}/live`); socket.current=ws;
       ws.onopen=()=>setTransport("live");ws.onclose=()=>setTransport("retrying");ws.onerror=()=>setTransport("retrying");
       ws.onmessage=e=>{const msg=JSON.parse(e.data);if(msg.type==="caption")setSession(s=>s?{...s,transcript:[...s.transcript,msg.segment]}:s)};
-      const rec=new MediaRecorder(media,{mimeType:MediaRecorder.isTypeSupported("audio/webm;codecs=opus")?"audio/webm;codecs=opus":"audio/webm"}); recorder.current=rec; seq.current=0;
-      rec.ondataavailable=async e=>{if(!e.data.size||speaking.current)return;const p={key:`${created.id}:${seq.current}`,sessionId:created.id,sequence:seq.current++,blob:e.data,uploaded:false};await putPart(p);socket.current?.readyState===1&&socket.current.send(e.data);flushAll(created.id).catch(()=>{})};
-      const ctx=new AudioContext(); const analyser=ctx.createAnalyser(); ctx.createMediaStreamSource(media).connect(analyser); const data=new Uint8Array(analyser.frequencyBinCount);
-      const meter=()=>{if(!stream.current)return;analyser.getByteFrequencyData(data);setLevel(Math.min(100,data.reduce((a,b)=>a+b,0)/data.length));requestAnimationFrame(meter)};meter();
+      seq.current=0;capture.current=await startPcmCapture(media,async blob=>{if(!blob.size||speaking.current)return;const p={key:`${created.id}:${seq.current}`,sessionId:created.id,sequence:seq.current++,blob,uploaded:false};await putPart(p);flushAll(created.id).catch(()=>{})},setLevel);
       try{await (navigator as Navigator & {wakeLock?:{request:(x:string)=>Promise<unknown>}}).wakeLock?.request("screen")}catch{}
-      startAt.current=Date.now();setElapsed(0);setSession(created);rec.start(3000);
+      startAt.current=Date.now();setElapsed(0);setSession(created);
     } catch(e){setError(e instanceof Error?e.message:String(e))}
   }
 
   async function stop() {
-    if(!session)return; recorder.current?.stop(); stream.current?.getTracks().forEach(t=>t.stop());stream.current=null;socket.current?.close();
+    if(!session)return;await capture.current?.stop();capture.current=null;stream.current?.getTracks().forEach(t=>t.stop());stream.current=null;socket.current?.close();
     await new Promise(r=>setTimeout(r,250)); await flushAll(session.id);
     const next=await api(`/api/sessions/${session.id}/finish`,{method:"POST",headers:{"Idempotency-Key":crypto.randomUUID()}});setSession(next);
   }
@@ -75,7 +74,7 @@ export default function Home() {
   const active=session?.status==="recording"; const seconds=Math.floor(elapsed/1000); const stages=["recording","uploading","transcribing","organizing","draft_ready","published"];
 
   return <main className="shell">
-    <header className="top"><div><div className="brand">NTU//COURSE_AGENT</div><small>REC · TRANSLATE · ORGANIZE · PUBLISH</small></div><span className="badge">{online?"ONLINE":"OFFLINE"}{user?` · ${user.login}`:""}</span></header>
+    <header className="top"><div><div className="brand">NTU//COURSE_AGENT</div><small>REC · TRANSLATE · ORGANIZE · PUBLISH</small></div><span className="badge">{online?"ONLINE":"OFFLINE"} · {providerName.toUpperCase()}{user?` · ${user.login}`:""}</span></header>
     <div className="steps">{stages.map(x=><span className={`step ${session?.status===x?"on":""}`} key={x}>{x}</span>)}</div>
     <div className="grid">
       {authReady&&!user&&<Window title="AUTH_REQUIRED" tag="GITHUB" className="wide"><p>此服务仅允许配置的 GitHub 账号进入。</p><a className="btn primary" href={`${API}/auth/github/login?return_to=${encodeURIComponent(location.href)}`}>使用 GitHub 登录</a></Window>}
