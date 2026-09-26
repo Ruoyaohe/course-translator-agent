@@ -7,6 +7,8 @@ from .models import CourseDraft, Evidence, MindMapNode, ScheduleItem, Transcript
 
 
 class MockCourseProvider:
+    captions_from_upload = True
+
     async def live_caption(self, sequence: int) -> TranscriptSegment:
         samples = [
             ("Today we will review visual storytelling and production design.", "今天我们将复习视觉叙事和制作设计。"),
@@ -37,6 +39,7 @@ class QwenCourseProvider(MockCourseProvider):
     """DashScope adapter. Live audio transport is proxied by the websocket route."""
 
     def __init__(self):
+        self.captions_from_upload = False
         self.api_key = os.environ.get("DASHSCOPE_API_KEY", "")
         self.model = os.environ.get("QWEN_TEXT_MODEL", "qwen3.8-max")
         if not self.api_key:
@@ -57,4 +60,3 @@ class QwenCourseProvider(MockCourseProvider):
 
 def get_provider():
     return QwenCourseProvider() if os.environ.get("COURSE_PROVIDER", "mock") == "qwen" else MockCourseProvider()
-
