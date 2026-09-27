@@ -38,9 +38,9 @@
 .secondary { background: var(--bg); color: var(--ink); }
 .danger { background: var(--orange); color: #10110c; border-color: var(--orange); }
 .field { display: grid; grid-template-columns: minmax(12ch, 17ch) 1fr; gap: 1rem; align-items: center; margin-bottom: 1rem; color: var(--muted); }
-.field input, .field textarea { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 0; background: var(--bg); color: var(--ink); padding: .75rem 1ch; font: inherit; }
+.field input, .field textarea, .field select { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 0; background: var(--bg); color: var(--ink); padding: .75rem 1ch; font: inherit; }
 .field textarea { min-height: 9rem; resize: vertical; }
-.field input:focus, .field textarea:focus { outline: 1px solid var(--acid); border-color: var(--acid); }
+.field input:focus, .field textarea:focus, .field select:focus { outline: 1px solid var(--acid); border-color: var(--acid); }
 .progress { height: .85rem; overflow: hidden; background: #050504; border: 1px solid var(--line); }
 .progress i { display: block; height: 100%; background: var(--acid); transition: width 100ms linear; }
 @media (max-width: 680px) {

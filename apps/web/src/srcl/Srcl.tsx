@@ -1,6 +1,6 @@
 "use client";
 
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from "react";
+import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
 import styles from "./Srcl.module.css";
 
 // Adapted from the MIT-licensed SRCL components at sacred.computer.
@@ -23,6 +23,10 @@ export function Input({ label, className = "", ...props }: InputHTMLAttributes<H
 
 export function TextArea({ label, className = "", ...props }: TextareaHTMLAttributes<HTMLTextAreaElement> & { label: string }) {
   return <label className={`${styles.field} ${className}`}><span>{label}</span><textarea {...props}/></label>;
+}
+
+export function Select({ label, className = "", children, ...props }: SelectHTMLAttributes<HTMLSelectElement> & { label: string }) {
+  return <label className={`${styles.field} ${className}`}><span>{label}</span><select {...props}>{children}</select></label>;
 }
 
 export function Progress({ value }: { value: number }) {

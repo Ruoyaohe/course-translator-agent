@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { markUploaded, pendingParts, putPart, sha256, StoredPart } from "../src/storage";
 import { CaptureController, startPcmCapture } from "../src/audio";
-import { Button, Input, Progress, TextArea, Window } from "../src/srcl/Srcl";
+import { Button, Input, Progress, Select, TextArea, Window } from "../src/srcl/Srcl";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 type Segment = { id:string; start_ms:number; end_ms:number; source:string; translation:string };
@@ -11,6 +11,7 @@ type Schedule = { id:string; kind:string; title:string; datetime:string|null; st
 type Draft = { summary:string; key_points:string[]; schedule:Schedule[]; mindmap:unknown[]; pending_confirmation:string[] };
 type Session = { id:string; course:string; title:string; status:string; transcript:Segment[]; parts:number[]; draft?:Draft; draft_source?:string; published_path?:string; error?:string };
 type OrganizeEstimate = { model:string; currency:"CNY"; estimated_input_tokens:number; estimated_output_tokens:number; estimated_total_tokens:number; estimated_input_cost:number; estimated_output_cost:number; estimated_total_cost:number; estimated_duration_seconds:number; input_rate_per_million:number; output_rate_per_million:number; pricing_tier:string; pricing_region:string; is_estimate:boolean; cache_assumed:boolean };
+type AudioInput = { deviceId:string; label:string };
 
 async function api(path:string, init?:RequestInit) {
   const response = await fetch(`${API}${path}`, {...init, credentials:"include"});
@@ -26,6 +27,8 @@ export default function Home() {
   const [online,setOnline]=useState(true);
   const [transport,setTransport]=useState<"idle"|"connecting"|"live"|"retrying">("idle");
   const [providerName,setProviderName]=useState("unknown");
+  const [audioInputs,setAudioInputs]=useState<AudioInput[]>([]); const [selectedAudioInput,setSelectedAudioInput]=useState("");
+  const [activeAudioLabel,setActiveAudioLabel]=useState("系统默认麦克风"); const [deviceLoading,setDeviceLoading]=useState(false);
   const [estimate,setEstimate]=useState<OrganizeEstimate|null>(null); const [estimateOpen,setEstimateOpen]=useState(false);
   const [estimateLoading,setEstimateLoading]=useState(false); const [organizing,setOrganizing]=useState(false); const [estimateError,setEstimateError]=useState("");
   const [organizeRemaining,setOrganizeRemaining]=useState<number|null>(null); const organizeDeadline=useRef(0);
@@ -34,7 +37,7 @@ export default function Home() {
   const socket=useRef<WebSocket|null>(null); const startAt=useRef(0); const speaking=useRef(false);
   const flushing=useRef(false);
 
-  useEffect(()=>{if(process.env.NODE_ENV==="development"){navigator.serviceWorker?.getRegistrations().then(items=>items.forEach(item=>item.unregister()));caches?.keys().then(keys=>keys.filter(key=>key.startsWith("ntu-agent-")).forEach(key=>caches.delete(key)))}else{navigator.serviceWorker?.register("/sw.js").catch(()=>{})}api("/health").then(x=>setProviderName(x.provider)).catch(()=>{});api("/auth/me").then(x=>setUser(x.user)).catch(()=>setUser(null)).finally(()=>setAuthReady(true));const sync=()=>setOnline(navigator.onLine);sync();addEventListener("online",sync);addEventListener("offline",sync);return()=>{removeEventListener("online",sync);removeEventListener("offline",sync)}},[]);
+  useEffect(()=>{if(process.env.NODE_ENV==="development"){navigator.serviceWorker?.getRegistrations().then(items=>items.forEach(item=>item.unregister()));caches?.keys().then(keys=>keys.filter(key=>key.startsWith("ntu-agent-")).forEach(key=>caches.delete(key)))}else{navigator.serviceWorker?.register("/sw.js").catch(()=>{})}api("/health").then(x=>setProviderName(x.provider)).catch(()=>{});api("/auth/me").then(x=>setUser(x.user)).catch(()=>setUser(null)).finally(()=>setAuthReady(true));const sync=()=>setOnline(navigator.onLine);const devices=()=>refreshAudioInputs(false).catch(()=>{});sync();devices();addEventListener("online",sync);addEventListener("offline",sync);navigator.mediaDevices?.addEventListener("devicechange",devices);return()=>{removeEventListener("online",sync);removeEventListener("offline",sync);navigator.mediaDevices?.removeEventListener("devicechange",devices);capture.current?.stop().catch(()=>{});stream.current?.getTracks().forEach(track=>track.stop())}},[]);
   useEffect(()=>{if(online&&session)flushAll(session.id).catch(()=>{})},[online]);
   useEffect(()=>{if(!session||session.status!=="recording")return;const id=setInterval(()=>setElapsed(Date.now()-startAt.current),500);return()=>clearInterval(id)},[session?.status]);
   useEffect(()=>{if(!session||session.status!=="recording")return;const id=setInterval(()=>flushAll(session.id).catch(()=>{}),3000);return()=>clearInterval(id)},[session?.id,session?.status]);
@@ -52,15 +55,37 @@ export default function Home() {
   }
   async function flushAll(id:string) { if(flushing.current)return;flushing.current=true;setUploading(true);try{for(const p of await pendingParts(id))await flush(p);setTransport(socket.current?.readyState===1?"live":"retrying")}finally{flushing.current=false;setUploading(false)} }
 
+  async function refreshAudioInputs(requestPermission=true) {
+    setDeviceLoading(true); setError("");
+    try {
+      if(requestPermission){const probe=await navigator.mediaDevices.getUserMedia({audio:true});probe.getTracks().forEach(track=>track.stop())}
+      const devices=(await navigator.mediaDevices.enumerateDevices()).filter(device=>device.kind==="audioinput"&&device.deviceId!=="default"&&!/(iphone|ipad|手机)/i.test(device.label));
+      const inputs=devices.map((device,index)=>({deviceId:device.deviceId,label:device.label||`音频输入 ${index+1}`}));
+      setAudioInputs(inputs);setSelectedAudioInput(current=>current&&inputs.some(input=>input.deviceId===current)?current:"");
+    } finally { setDeviceLoading(false) }
+  }
+
+  async function attachAudioInput(sessionId:string,deviceId:string) {
+    await capture.current?.stop(); capture.current=null; stream.current?.getTracks().forEach(track=>track.stop()); stream.current=null;
+    const media=await navigator.mediaDevices.getUserMedia({audio:{deviceId:deviceId?{exact:deviceId}:undefined,echoCancellation:true,noiseSuppression:true,channelCount:1}});stream.current=media;
+    const track=media.getAudioTracks()[0];setActiveAudioLabel(track?.label||"系统默认麦克风");
+    capture.current=await startPcmCapture(media,async blob=>{if(!blob.size||speaking.current)return;const p={key:`${sessionId}:${seq.current}`,sessionId,sequence:seq.current++,blob,uploaded:false};await putPart(p);flushAll(sessionId).catch(()=>{})},setLevel);
+    await refreshAudioInputs(false);
+  }
+
+  async function chooseAudioInput(deviceId:string) {
+    setSelectedAudioInput(deviceId);if(session?.status!=="recording")return;
+    try{await attachAudioInput(session.id,deviceId)}catch(e){setError(`切换收声设备失败：${e instanceof Error?e.message:String(e)}`)}
+  }
+
   async function start() {
     setError("");
     try {
       const created:Session=await api("/api/sessions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({course,title,source_language:"en",target_language:"zh-CN",timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,hotwords:hotwords.split(",").map(x=>x.trim()).filter(Boolean),recording_consent:true})});
-      const media=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,channelCount:1}}); stream.current=media;
       setTransport("connecting");const wsBase=API.replace(/^http/,"ws"); const ws=new WebSocket(`${wsBase}/api/sessions/${created.id}/live`); socket.current=ws;
       ws.onopen=()=>setTransport("live");ws.onclose=()=>setTransport("retrying");ws.onerror=()=>setTransport("retrying");
       ws.onmessage=e=>{const msg=JSON.parse(e.data);if(msg.type==="caption")setSession(s=>s?{...s,transcript:[...s.transcript,msg.segment]}:s)};
-      seq.current=0;capture.current=await startPcmCapture(media,async blob=>{if(!blob.size||speaking.current)return;const p={key:`${created.id}:${seq.current}`,sessionId:created.id,sequence:seq.current++,blob,uploaded:false};await putPart(p);flushAll(created.id).catch(()=>{})},setLevel);
+      seq.current=0;await attachAudioInput(created.id,selectedAudioInput);
       try{await (navigator as Navigator & {wakeLock?:{request:(x:string)=>Promise<unknown>}}).wakeLock?.request("screen")}catch{}
       startAt.current=Date.now();setElapsed(0);setSession(created);
     } catch(e){setError(e instanceof Error?e.message:String(e))}
@@ -86,8 +111,8 @@ export default function Home() {
     <div className="steps">{stages.map(x=><span className={`step ${session?.status===x?"on":""}`} key={x}>{x}</span>)}</div>
     <div className="grid">
       {authReady&&!user&&<Window title="AUTH_REQUIRED" tag="GITHUB" className="wide"><p>此服务仅允许配置的 GitHub 账号进入。</p><a className="btn primary" href={`${API}/auth/github/login?return_to=${encodeURIComponent(location.href)}`}>使用 GitHub 登录</a></Window>}
-      {!session&&user&&<Window title="SESSION_SETUP" tag="01" className="wide"><Input label="COURSE" value={course} onChange={e=>setCourse(e.target.value)}/><Input label="TITLE" value={title} onChange={e=>setTitle(e.target.value)}/><Input label="HOTWORDS / comma separated" value={hotwords} onChange={e=>setHotwords(e.target.value)}/><p className="time">开始即确认你已获得课堂录音许可。录音时请保持本页在前台。</p></Window>}
-      {session&&<><Window title="CAPTURE_MONITOR" tag={session.status}><div style={{fontSize:38,fontWeight:800}}>{String(Math.floor(seconds/60)).padStart(2,"0")}:{String(seconds%60).padStart(2,"0")}</div><Progress value={level}/><div className="statusline"><span>UPLOADED {session.parts.length}</span><span>{uploading?"SYNCING":"SYNCED"}</span><span>CAPTION {transport.toUpperCase()}</span><span>KEEP SCREEN ON</span></div>{session.status==="organizing"&&<div className="organize-countdown"><div className="countdown-head"><span>QWEN // STRUCTURING REVIEW_DRAFT</span><strong>{organizeRemaining===null?"CALCULATING":organizeRemaining>0?`ETA ${eta(organizeRemaining)}`:"FINALIZING"}</strong></div><div className={`terminal-progress ${organizeRemaining===0?"indeterminate":""}`}><i style={organizeRemaining!==null?{width:`${Math.min(96,Math.max(4,(1-organizeRemaining/(estimate?.estimated_duration_seconds||30))*100))}%`}:undefined}/></div><small>{organizeRemaining===0?"模型仍在生成结构化内容，请保持页面开启…":"正在提取摘要、知识点、日程与 DDL…"}</small></div>}{transport==="retrying"&&session.status==="recording"&&<p className="warn">实时字幕连接已断开；录音仍会保存并持续上传。</p>}{session.error&&<p className="warn">{session.error}</p>}</Window>
+      {!session&&user&&<Window title="SESSION_SETUP" tag="DESKTOP MIC" className="wide"><Input label="COURSE" value={course} onChange={e=>setCourse(e.target.value)}/><Input label="TITLE" value={title} onChange={e=>setTitle(e.target.value)}/><Input label="HOTWORDS / comma separated" value={hotwords} onChange={e=>setHotwords(e.target.value)}/><div className="audio-source"><Select label="AUDIO INPUT" value={selectedAudioInput} onChange={e=>chooseAudioInput(e.target.value)}><option value="">系统默认麦克风</option>{audioInputs.map(input=><option key={input.deviceId} value={input.deviceId}>{input.label}</option>)}</Select><Button type="button" onClick={()=>refreshAudioInputs(true).catch(e=>setError(e instanceof Error?e.message:String(e)))} disabled={deviceLoading}>{deviceLoading?"扫描中…":"刷新 / 授权设备"}</Button></div><p className="time">电脑直接收声；连接蓝牙耳机或麦克风后，点击刷新并选择对应输入。手机仅用于控制页面。</p><p className="time">开始即确认你已获得课堂录音许可。录音时请保持本页在前台。</p></Window>}
+      {session&&<><Window title="CAPTURE_MONITOR" tag={session.status}><div style={{fontSize:38,fontWeight:800}}>{String(Math.floor(seconds/60)).padStart(2,"0")}:{String(seconds%60).padStart(2,"0")}</div><Progress value={level}/><div className="statusline"><span>INPUT {activeAudioLabel}</span><span>UPLOADED {session.parts.length}</span><span>{uploading?"SYNCING":"SYNCED"}</span><span>CAPTION {transport.toUpperCase()}</span><span>KEEP SCREEN ON</span></div>{session.status==="recording"&&<Select label="SWITCH INPUT" value={selectedAudioInput} onChange={e=>chooseAudioInput(e.target.value)}><option value="">系统默认麦克风</option>{audioInputs.map(input=><option key={input.deviceId} value={input.deviceId}>{input.label}</option>)}</Select>}{session.status==="organizing"&&<div className="organize-countdown"><div className="countdown-head"><span>QWEN // STRUCTURING REVIEW_DRAFT</span><strong>{organizeRemaining===null?"CALCULATING":organizeRemaining>0?`ETA ${eta(organizeRemaining)}`:"FINALIZING"}</strong></div><div className={`terminal-progress ${organizeRemaining===0?"indeterminate":""}`}><i style={organizeRemaining!==null?{width:`${Math.min(96,Math.max(4,(1-organizeRemaining/(estimate?.estimated_duration_seconds||30))*100))}%`}:undefined}/></div><small>{organizeRemaining===0?"模型仍在生成结构化内容，请保持页面开启…":"正在提取摘要、知识点、日程与 DDL…"}</small></div>}{transport==="retrying"&&session.status==="recording"&&<p className="warn">实时字幕连接已断开；录音仍会保存并持续上传。</p>}{session.error&&<p className="warn">{session.error}</p>}</Window>
       <Window title="LIVE_TRANSCRIPT" tag="EN→ZH"><div>{session.transcript.length?session.transcript.map(s=><div className="caption" key={s.id}><span className="time">{(s.start_ms/1000).toFixed(1)}s · {s.id}</span><p>{s.source}</p><p className="zh">{s.translation}</p></div>):<p className="time">等待语音片段…</p>}</div></Window></>}
       {session?.draft&&<><Window title="REVIEW_DRAFT" tag={session.draft_source==="qwen_mcp"?"QWEN MCP":"AI SETUP REQUIRED"} className="wide"><TextArea label="SUMMARY" value={session.draft.summary} onChange={e=>setSession({...session,draft:{...session.draft!,summary:e.target.value}})} onBlur={e=>saveDraft(e.target.value)}/><h3>KEY POINTS</h3>{session.draft.key_points.map(x=><p key={x}>› {x}</p>)}<h3>SCHEDULE / DDL</h3><div className="schedule">{session.draft.schedule.map(x=><div key={x.id}><strong>{x.title}</strong><br/><small>{x.datetime||"待确认"} · {x.status}</small></div>)}</div>{session.draft.pending_confirmation.map(x=><p className="warn" key={x}>⚠ {x}</p>)}</Window></>}
       {session?.published_path&&<Window title="PUBLISHED" tag="GIT" className="wide"><p>✓ 已发布到 Obsidian</p><code>{session.published_path}</code></Window>}
