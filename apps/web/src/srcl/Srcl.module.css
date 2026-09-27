@@ -1,0 +1,51 @@
+.window {
+  display: block;
+  min-width: min(24ch, 100%);
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: 1ch 1rem 0 var(--shadow, #070706);
+}
+.windowBar {
+  min-height: 2.65rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2ch;
+  padding: 0 1.25rem;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.windowBody { padding: 1.5rem; }
+.button {
+  min-height: 3rem;
+  padding: 0 2ch;
+  border: 1px solid var(--line-bright, #eee9dc);
+  border-radius: 0;
+  font: inherit;
+  font-weight: 800;
+  letter-spacing: .02em;
+  cursor: pointer;
+  text-transform: uppercase;
+  transition: background 120ms linear, color 120ms linear, transform 120ms linear;
+}
+.button:hover:not(:disabled), .button:focus-visible:not(:disabled) { transform: translate(-2px, -2px); box-shadow: 3px 3px 0 var(--accent); outline: none; }
+.button:active:not(:disabled) { transform: translate(0, 0); box-shadow: none; }
+.button:disabled { opacity: .45; cursor: not-allowed; }
+.primary { background: var(--accent); color: #10110c; border-color: var(--accent); }
+.secondary { background: var(--bg); color: var(--ink); }
+.danger { background: var(--danger, #ff6846); color: #10110c; border-color: var(--danger, #ff6846); }
+.field { display: grid; grid-template-columns: minmax(12ch, 17ch) 1fr; gap: 1rem; align-items: center; margin-bottom: 1rem; color: var(--muted); }
+.field input, .field textarea { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 0; background: var(--bg); color: var(--ink); padding: .75rem 1ch; font: inherit; }
+.field textarea { min-height: 9rem; resize: vertical; }
+.field input:focus, .field textarea:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+.progress { height: .85rem; overflow: hidden; background: #050504; border: 1px solid var(--line); }
+.progress i { display: block; height: 100%; background: var(--accent); transition: width 100ms linear; }
+@media (max-width: 680px) {
+  .window { box-shadow: .45rem .45rem 0 var(--shadow, #070706); }
+  .windowBody { padding: 1rem; }
+  .field { grid-template-columns: 1fr; gap: .4rem; }
+  .button { width: 100%; }
+}
