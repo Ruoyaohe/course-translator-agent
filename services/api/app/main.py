@@ -11,7 +11,7 @@ from fastapi import BackgroundTasks, FastAPI, File, Header, HTTPException, Uploa
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from .auth import current_user, router as auth_router, verify as verify_auth
-from .models import CourseDraft, CourseSession, SessionCreate, SessionStatus, now_iso
+from .models import CourseDraft, CourseSession, PublishOptions, SessionCreate, SessionStatus, now_iso
 from .provider import get_provider
 from .pricing import estimate_organize
 from .publish import publish_to_obsidian
@@ -201,7 +201,7 @@ def update_draft(session_id: str, draft: CourseDraft):
 
 
 @app.post("/api/sessions/{session_id}/publish", response_model=CourseSession)
-def publish(session_id: str, idempotency_key: str | None = Header(None)):
+def publish(session_id: str, options: PublishOptions | None = None, idempotency_key: str | None = Header(None)):
     session = load(session_id)
     if session.status == SessionStatus.published:
         return session
@@ -209,6 +209,10 @@ def publish(session_id: str, idempotency_key: str | None = Header(None)):
         raise HTTPException(409, "A reviewed draft is required")
     if not ensure_key(session, "publish", idempotency_key):
         return session
+    if options:
+        session.publish_date = options.date
+        session.publish_filename = options.filename
+        session.publish_properties = {"type": options.note_type, "category": options.category, "format": options.format, "tags": options.tags}
     session.status = SessionStatus.approved
     STORE.save(session)
     try:

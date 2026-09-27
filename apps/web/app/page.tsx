@@ -9,9 +9,10 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 type Segment = { id:string; start_ms:number; end_ms:number; source:string; translation:string };
 type Schedule = { id:string; kind:string; title:string; datetime:string|null; status:string };
 type Draft = { summary:string; key_points:string[]; schedule:Schedule[]; mindmap:unknown[]; pending_confirmation:string[] };
-type Session = { id:string; course:string; title:string; status:string; transcript:Segment[]; parts:number[]; draft?:Draft; draft_source?:string; published_path?:string; error?:string };
+type Session = { id:string; course:string; title:string; timezone:string; created_at:string; status:string; transcript:Segment[]; parts:number[]; draft?:Draft; draft_source?:string; published_path?:string; error?:string };
 type OrganizeEstimate = { model:string; currency:"CNY"; estimated_input_tokens:number; estimated_output_tokens:number; estimated_total_tokens:number; estimated_input_cost:number; estimated_output_cost:number; estimated_total_cost:number; estimated_duration_seconds:number; input_rate_per_million:number; output_rate_per_million:number; pricing_tier:string; pricing_region:string; is_estimate:boolean; cache_assumed:boolean };
 type AudioInput = { deviceId:string; label:string };
+type PublishForm = { date:string; filename:string; note_type:string; category:string; format:string; tags:string };
 
 async function api(path:string, init?:RequestInit) {
   const response = await fetch(`${API}${path}`, {...init, credentials:"include"});
@@ -31,6 +32,8 @@ export default function Home() {
   const [activeAudioLabel,setActiveAudioLabel]=useState("系统默认麦克风"); const [deviceLoading,setDeviceLoading]=useState(false);
   const [estimate,setEstimate]=useState<OrganizeEstimate|null>(null); const [estimateOpen,setEstimateOpen]=useState(false);
   const [estimateLoading,setEstimateLoading]=useState(false); const [organizing,setOrganizing]=useState(false); const [estimateError,setEstimateError]=useState("");
+  const [publishOpen,setPublishOpen]=useState(false); const [publishing,setPublishing]=useState(false);
+  const [publishForm,setPublishForm]=useState<PublishForm>({date:"",filename:"",note_type:"note",category:"ntu-class-record",format:"课堂录音与AI整理",tags:"NTU, 课堂记录"});
   const [organizeRemaining,setOrganizeRemaining]=useState<number|null>(null); const organizeDeadline=useRef(0);
   const [user,setUser]=useState<{login:string}|null>(null); const [authReady,setAuthReady]=useState(false);
   const capture=useRef<CaptureController|null>(null); const stream=useRef<MediaStream|null>(null); const seq=useRef(0);
@@ -98,7 +101,10 @@ export default function Home() {
   }
   function speak() { const text=session?.transcript.at(-1)?.translation;if(!text)return;speaking.current=true;const utter=new SpeechSynthesisUtterance(text);utter.lang="zh-CN";utter.onend=()=>speaking.current=false;utter.onerror=()=>speaking.current=false;speechSynthesis.speak(utter) }
   async function saveDraft(summary:string){if(!session?.draft)return;const next=await api(`/api/sessions/${session.id}/draft`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({...session.draft,summary})});setSession(next)}
-  async function publish(){if(!session)return;try{const next=await api(`/api/sessions/${session.id}/publish`,{method:"POST",headers:{"Idempotency-Key":crypto.randomUUID()}});setSession(next)}catch(e){setError(e instanceof Error?e.message:String(e))}}
+  function localRecordingDate(current:Session){const parts=new Intl.DateTimeFormat("en-CA",{timeZone:current.timezone||Intl.DateTimeFormat().resolvedOptions().timeZone,year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date(current.created_at));const pick=(type:string)=>parts.find(part=>part.type===type)?.value||"";return `${pick("year")}-${pick("month")}-${pick("day")}`}
+  function safeFilename(value:string){return value.replace(/[\\/:*?"<>|]/g,"-").trim()||"未命名"}
+  function requestPublish(){if(!session)return;const date=localRecordingDate(session);setPublishForm({date,filename:`${date}—${safeFilename(session.course)}—${safeFilename(session.title)}.md`,note_type:"note",category:"ntu-class-record",format:"课堂录音与AI整理",tags:"NTU, 课堂记录"});setPublishOpen(true)}
+  async function publish(){if(!session)return;setPublishing(true);setError("");try{const next=await api(`/api/sessions/${session.id}/publish`,{method:"POST",headers:{"Content-Type":"application/json","Idempotency-Key":crypto.randomUUID()},body:JSON.stringify({...publishForm,tags:publishForm.tags.split(",").map(tag=>tag.trim()).filter(Boolean)})});setSession(next);setPublishOpen(false)}catch(e){setError(e instanceof Error?e.message:String(e))}finally{setPublishing(false)}}
   async function requestOrganize(){if(!session)return;setEstimateOpen(true);setEstimate(null);setEstimateError("");setEstimateLoading(true);try{setEstimate(await api(`/api/sessions/${session.id}/organize-estimate`))}catch(e){setEstimateError(e instanceof Error?e.message:String(e))}finally{setEstimateLoading(false)}}
   async function confirmOrganize(){if(!session||!estimate)return;setOrganizing(true);setError("");organizeDeadline.current=Date.now()+estimate.estimated_duration_seconds*1000;setOrganizeRemaining(estimate.estimated_duration_seconds);try{const next=await api(`/api/sessions/${session.id}/organize`,{method:"POST",headers:{"Idempotency-Key":crypto.randomUUID()}});setSession(next);setEstimateOpen(false)}catch(e){organizeDeadline.current=0;setOrganizeRemaining(null);setEstimateError(e instanceof Error?e.message:String(e))}finally{setOrganizing(false)}}
   const token=(value:number)=>new Intl.NumberFormat("zh-CN").format(value);
@@ -118,7 +124,14 @@ export default function Home() {
       {session?.published_path&&<Window title="PUBLISHED" tag="GIT" className="wide"><p>✓ 已发布到 Obsidian</p><code>{session.published_path}</code></Window>}
     </div>
     {error&&<p className="warn">ERROR: {error}</p>}
-    <div className="actions">{!session&&user&&<Button theme="primary" onClick={start}>● 开始录音</Button>}{active&&<><Button theme="danger" onClick={stop}>■ 停止并整理</Button><Button onClick={speak}>朗读最近译文</Button></>}{session?.status==="draft_ready"&&<><Button onClick={requestOrganize}>AI 重新整理</Button><Button theme="primary" disabled={session.draft_source!=="qwen_mcp"} onClick={publish}>确认并发布</Button><Button onClick={()=>setSession(null)}>暂存并返回</Button></>}</div>
+    <div className="actions">{!session&&user&&<Button theme="primary" onClick={start}>● 开始录音</Button>}{active&&<><Button theme="danger" onClick={stop}>■ 停止并整理</Button><Button onClick={speak}>朗读最近译文</Button></>}{session?.status==="draft_ready"&&<><Button onClick={requestOrganize}>AI 重新整理</Button><Button theme="primary" disabled={session.draft_source!=="qwen_mcp"} onClick={requestPublish}>确认并发布</Button><Button onClick={()=>setSession(null)}>暂存并返回</Button></>}</div>
+    {publishOpen&&<div className="dialog-backdrop" role="presentation" onMouseDown={e=>{if(e.target===e.currentTarget&&!publishing)setPublishOpen(false)}}><section className="dialog publish-dialog" role="dialog" aria-modal="true" aria-labelledby="publish-dialog-title">
+      <div className="bar"><span id="publish-dialog-title">OBSIDIAN_PUBLISH // FINAL_CHECK</span><button className="dialog-close" aria-label="关闭" disabled={publishing} onClick={()=>setPublishOpen(false)}>×</button></div>
+      <div className="dialog-content"><div className="dialog-status"><span className="pulse">●</span><div><strong>发布前核对文件名与笔记属性</strong><small>日期已按录制时所在时区自动填写。确认后才会写入 Obsidian。</small></div></div>
+        <div className="publish-fields"><Input label="RECORDING DATE" type="date" value={publishForm.date} onChange={e=>setPublishForm({...publishForm,date:e.target.value})}/><Input label="FILENAME" value={publishForm.filename} onChange={e=>setPublishForm({...publishForm,filename:e.target.value})}/><Input label="TYPE" value={publishForm.note_type} onChange={e=>setPublishForm({...publishForm,note_type:e.target.value})}/><Input label="CATEGORY" value={publishForm.category} onChange={e=>setPublishForm({...publishForm,category:e.target.value})}/><Input label="FORMAT" value={publishForm.format} onChange={e=>setPublishForm({...publishForm,format:e.target.value})}/><Input label="TAGS / comma separated" value={publishForm.tags} onChange={e=>setPublishForm({...publishForm,tags:e.target.value})}/></div>
+        <div className="publish-preview"><span>OBSIDIAN PATH</span><code>Note/NTU课堂记录/课程/{session?.course}/{publishForm.filename}</code></div>
+      </div><div className="dialog-actions"><Button disabled={publishing} onClick={()=>setPublishOpen(false)}>返回修改</Button><Button theme="primary" disabled={publishing||!publishForm.date||!publishForm.filename} onClick={publish}>{publishing?"发布中…":"确认信息并发布"}</Button></div>
+    </section></div>}
     {estimateOpen&&<div className="dialog-backdrop" role="presentation" onMouseDown={e=>{if(e.target===e.currentTarget&&!organizing)setEstimateOpen(false)}}><section className="dialog" role="dialog" aria-modal="true" aria-labelledby="cost-dialog-title">
       <div className="bar"><span id="cost-dialog-title">AI_ORGANIZE // COST_CHECK</span><button className="dialog-close" aria-label="关闭" disabled={organizing} onClick={()=>setEstimateOpen(false)}>×</button></div>
       <div className="dialog-content">

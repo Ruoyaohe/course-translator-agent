@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from .models import CourseDraft, CourseSession
 
 
@@ -10,10 +12,23 @@ def safe_name(value: str) -> str:
     return value[:100] or "未命名"
 
 
+def recording_date(session: CourseSession) -> str:
+    if session.publish_date:
+        return session.publish_date
+    created = datetime.fromisoformat(session.created_at.replace("Z", "+00:00"))
+    try:
+        return created.astimezone(ZoneInfo(session.timezone)).date().isoformat()
+    except (KeyError, ValueError):
+        return created.date().isoformat()
+
+
 def note_relative_path(session: CourseSession, root: Path | None = None) -> Path:
     root = root or Path("Note/NTU课堂记录")
     course = safe_name(session.course)
-    filename = f"{session.created_at[:10]}—{course}—{safe_name(session.title)}.md"
+    default_filename = f"{recording_date(session)}—{course}—{safe_name(session.title)}.md"
+    filename = safe_name(session.publish_filename or default_filename)
+    if not filename.lower().endswith(".md"):
+        filename += ".md"
     return root / "课程" / course / filename
 
 
@@ -39,10 +54,14 @@ def note_markdown(session: CourseSession) -> str:
     duration_ms = max((segment.end_ms for segment in session.transcript), default=0)
     duration = f"{duration_ms // 60000}分{duration_ms % 60000 // 1000:02d}秒（据录音时间戳）"
     heading = f"{session.course}：{session.title}"
-    lines = ["---", "type: note", "category: ntu-class-record", f"course: {session.course}",
-             f"date: {session.created_at[:10]}", "format: 课堂录音与AI整理", f"duration: {duration}",
+    properties = session.publish_properties
+    note_type = str(properties.get("type", "note")); category = str(properties.get("category", "ntu-class-record"))
+    note_format = str(properties.get("format", "课堂录音与AI整理")); tags = properties.get("tags", ["NTU", "课堂记录"])
+    if not isinstance(tags, list): tags = ["NTU", "课堂记录"]
+    lines = ["---", f"type: {note_type}", f"category: {category}", f"course: {session.course}",
+             f"date: {recording_date(session)}", f"format: {note_format}", f"duration: {duration}",
              "source: 课堂录音经本地转写与千问AI整理", f"source_title: {heading}", "tags:",
-             "  - NTU", "  - 课堂记录", "---", "", f"# {heading}", "",
+             *[f"  - {tag}" for tag in tags], "---", "", f"# {heading}", "",
              f"> 本笔记依据课堂录音的机器转写整理，日期、专有名词及作业要求仍应以学校通知和教师原文为准。", "",
              "## 课程摘要", "", draft.summary, "", "## 本节重点", ""]
     lines += [f"- {item}" for item in draft.key_points]
@@ -82,7 +101,7 @@ def controlled_block(session: CourseSession, kind: str) -> str:
     begin = f"<!-- NTU:{session.id}:{kind}:BEGIN -->"
     end = f"<!-- NTU:{session.id}:{kind}:END -->"
     note = note_relative_path(session).with_suffix("").as_posix()
-    rows = [begin, f"### {session.created_at[:10]} · [[{note}|{session.course}：{session.title}]]"]
+    rows = [begin, f"### {recording_date(session)} · [[{note}|{session.course}：{session.title}]]"]
     rows += [f"- [ ] {x.title} — {x.datetime or '待确认'}" for x in items]
     rows.append(end)
     return "\n".join(rows)

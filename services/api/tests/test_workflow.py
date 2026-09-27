@@ -45,12 +45,15 @@ def test_review_and_publish_workflow(tmp_path, monkeypatch):
     assert state["draft"]["schedule"][0]["status"] == "pending_confirmation"
     assert state["draft"]["schedule"][0]["evidence"]
 
-    published = client.post(f"/api/sessions/{sid}/publish", headers={"Idempotency-Key":"publish-1"})
+    published = client.post(f"/api/sessions/{sid}/publish", headers={"Idempotency-Key":"publish-1"}, json={
+        "date":"2026-09-28", "filename":"2026-09-28—Film Art—Reviewed title.md", "note_type":"note",
+        "category":"ntu-class-record", "format":"课堂录音与AI整理", "tags":["NTU", "课堂记录"]})
     assert published.status_code == 200
     assert published.json()["status"] == "published"
-    note = next(vault.rglob("2026-*Film Art*Production Design.md"))
+    note = next(vault.rglob("2026-09-28*Reviewed title.md"))
     assert "待确认" in note.read_text(encoding="utf-8")
     assert "category: ntu-class-record" in note.read_text(encoding="utf-8")
+    assert "date: 2026-09-28" in note.read_text(encoding="utf-8")
     assert not list(vault.rglob("完整原文.md"))
     assert not list(vault.rglob("脑图.mmd"))
 

@@ -72,6 +72,15 @@ class SessionCreate(BaseModel):
     recording_consent: bool
 
 
+class PublishOptions(BaseModel):
+    date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    filename: str = Field(min_length=1, max_length=180)
+    note_type: str = Field(default="note", min_length=1, max_length=60)
+    category: str = Field(default="ntu-class-record", min_length=1, max_length=80)
+    format: str = Field(default="课堂录音与AI整理", min_length=1, max_length=100)
+    tags: list[str] = Field(default_factory=lambda: ["NTU", "课堂记录"], max_length=20)
+
+
 class CourseSession(BaseModel):
     id: str
     course: str
@@ -91,3 +100,6 @@ class CourseSession(BaseModel):
     error: str | None = None
     published_path: str | None = None
     git_commit: str | None = None
+    publish_date: str | None = None
+    publish_filename: str | None = None
+    publish_properties: dict[str, object] = Field(default_factory=dict)
