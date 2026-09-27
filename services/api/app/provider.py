@@ -8,6 +8,7 @@ import sys
 import re
 from pathlib import Path
 from .models import CourseDraft, Evidence, MindMapNode, ScheduleItem, TranscriptSegment
+from .pricing import SYSTEM_PROMPT
 
 
 class MockCourseProvider:
@@ -50,17 +51,13 @@ class QwenCourseProvider(MockCourseProvider):
         self.captions_from_upload = False
         self.draft_source = "qwen_mcp"
         self.api_key = os.environ.get("DASHSCOPE_API_KEY", "")
-        self.model = os.environ.get("QWEN_TEXT_MODEL", "qwen3.8-max")
+        self.model = os.environ.get("QWEN_TEXT_MODEL", "qwen3.7-flash")
         if not self.api_key:
             raise RuntimeError("DASHSCOPE_API_KEY is required when COURSE_PROVIDER=qwen")
 
     def _finalize(self, transcript: list[TranscriptSegment], course: str) -> CourseDraft:
         schema = CourseDraft.model_json_schema()
-        prompt = """你是课程纪要 Agent。根据带时间戳的英文原文和中文译文重新理解并总结课程，不要逐句复制。
-输出简洁中文摘要、经过归纳的知识点、任务/上课/DDL、更正关系、待确认信息和分层脑图。
-任何日期不完整时必须标记 pending_confirmation；不得猜测年月日。每个日程项必须引用输入中真实存在的 segment_id。
-仅返回符合 JSON Schema 的 JSON。"""
-        payload = json.dumps({"model": self.model, "messages": [{"role": "system", "content": prompt},
+        payload = json.dumps({"model": self.model, "messages": [{"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": json.dumps([s.model_dump() for s in transcript], ensure_ascii=False)}],
             "response_format": {"type": "json_schema", "json_schema": {"name": "course_draft", "strict": True, "schema": schema}}}).encode()
         request = urllib.request.Request("https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",

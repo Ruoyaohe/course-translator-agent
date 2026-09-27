@@ -9,6 +9,7 @@ type Segment = { id:string; start_ms:number; end_ms:number; source:string; trans
 type Schedule = { id:string; kind:string; title:string; datetime:string|null; status:string };
 type Draft = { summary:string; key_points:string[]; schedule:Schedule[]; mindmap:unknown[]; pending_confirmation:string[] };
 type Session = { id:string; course:string; title:string; status:string; transcript:Segment[]; parts:number[]; draft?:Draft; draft_source?:string; published_path?:string; error?:string };
+type OrganizeEstimate = { model:string; currency:"CNY"; estimated_input_tokens:number; estimated_output_tokens:number; estimated_total_tokens:number; estimated_input_cost:number; estimated_output_cost:number; estimated_total_cost:number; estimated_duration_seconds:number; input_rate_per_million:number; output_rate_per_million:number; pricing_tier:string; pricing_region:string; is_estimate:boolean; cache_assumed:boolean };
 
 async function api(path:string, init?:RequestInit) {
   const response = await fetch(`${API}${path}`, {...init, credentials:"include"});
@@ -28,6 +29,9 @@ export default function Home() {
   const [online,setOnline]=useState(true);
   const [transport,setTransport]=useState<"idle"|"connecting"|"live"|"retrying">("idle");
   const [providerName,setProviderName]=useState("unknown");
+  const [estimate,setEstimate]=useState<OrganizeEstimate|null>(null); const [estimateOpen,setEstimateOpen]=useState(false);
+  const [estimateLoading,setEstimateLoading]=useState(false); const [organizing,setOrganizing]=useState(false); const [estimateError,setEstimateError]=useState("");
+  const [organizeRemaining,setOrganizeRemaining]=useState<number|null>(null); const organizeDeadline=useRef(0);
   const [user,setUser]=useState<{login:string}|null>(null); const [authReady,setAuthReady]=useState(false);
   const capture=useRef<CaptureController|null>(null); const stream=useRef<MediaStream|null>(null); const seq=useRef(0);
   const socket=useRef<WebSocket|null>(null); const startAt=useRef(0); const speaking=useRef(false);
@@ -38,6 +42,8 @@ export default function Home() {
   useEffect(()=>{if(!session||session.status!=="recording")return;const id=setInterval(()=>setElapsed(Date.now()-startAt.current),500);return()=>clearInterval(id)},[session?.status]);
   useEffect(()=>{if(!session||session.status!=="recording")return;const id=setInterval(()=>flushAll(session.id).catch(()=>{}),3000);return()=>clearInterval(id)},[session?.id,session?.status]);
   useEffect(()=>{if(!session||!["uploading","transcribing","organizing"].includes(session.status))return;const id=setInterval(async()=>{const next=await api(`/api/sessions/${session.id}`);setSession(next)},900);return()=>clearInterval(id)},[session?.id,session?.status]);
+  useEffect(()=>{if(session?.status!=="organizing")return;if(!organizeDeadline.current)organizeDeadline.current=Date.now()+30_000;const tick=()=>setOrganizeRemaining(Math.max(0,Math.ceil((organizeDeadline.current-Date.now())/1000)));tick();const id=setInterval(tick,250);return()=>clearInterval(id)},[session?.status]);
+  useEffect(()=>{if(session?.status==="draft_ready"||session?.status==="failed"){setOrganizeRemaining(null);organizeDeadline.current=0}},[session?.status]);
 
   async function flush(part:StoredPart) {
     if(!navigator.onLine)return;
@@ -71,7 +77,11 @@ export default function Home() {
   function speak() { const text=session?.transcript.at(-1)?.translation;if(!text)return;speaking.current=true;const utter=new SpeechSynthesisUtterance(text);utter.lang="zh-CN";utter.onend=()=>speaking.current=false;utter.onerror=()=>speaking.current=false;speechSynthesis.speak(utter) }
   async function saveDraft(summary:string){if(!session?.draft)return;const next=await api(`/api/sessions/${session.id}/draft`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({...session.draft,summary})});setSession(next)}
   async function publish(){if(!session)return;try{const next=await api(`/api/sessions/${session.id}/publish`,{method:"POST",headers:{"Idempotency-Key":crypto.randomUUID()}});setSession(next)}catch(e){setError(e instanceof Error?e.message:String(e))}}
-  async function organize(){if(!session)return;try{const next=await api(`/api/sessions/${session.id}/organize`,{method:"POST",headers:{"Idempotency-Key":crypto.randomUUID()}});setSession(next)}catch(e){setError(e instanceof Error?e.message:String(e))}}
+  async function requestOrganize(){if(!session)return;setEstimateOpen(true);setEstimate(null);setEstimateError("");setEstimateLoading(true);try{setEstimate(await api(`/api/sessions/${session.id}/organize-estimate`))}catch(e){setEstimateError(e instanceof Error?e.message:String(e))}finally{setEstimateLoading(false)}}
+  async function confirmOrganize(){if(!session||!estimate)return;setOrganizing(true);setError("");organizeDeadline.current=Date.now()+estimate.estimated_duration_seconds*1000;setOrganizeRemaining(estimate.estimated_duration_seconds);try{const next=await api(`/api/sessions/${session.id}/organize`,{method:"POST",headers:{"Idempotency-Key":crypto.randomUUID()}});setSession(next);setEstimateOpen(false)}catch(e){organizeDeadline.current=0;setOrganizeRemaining(null);setEstimateError(e instanceof Error?e.message:String(e))}finally{setOrganizing(false)}}
+  const token=(value:number)=>new Intl.NumberFormat("zh-CN").format(value);
+  const money=(value:number)=>`¥${value < .01 ? value.toFixed(4) : value.toFixed(3)}`;
+  const eta=(value:number)=>`${String(Math.floor(value/60)).padStart(2,"0")}:${String(value%60).padStart(2,"0")}`;
   const active=session?.status==="recording"; const seconds=Math.floor(elapsed/1000); const stages=["recording","uploading","transcribing","organizing","draft_ready","published"];
 
   return <main className="shell">
@@ -80,13 +90,32 @@ export default function Home() {
     <div className="grid">
       {authReady&&!user&&<Window title="AUTH_REQUIRED" tag="GITHUB" className="wide"><p>此服务仅允许配置的 GitHub 账号进入。</p><a className="btn primary" href={`${API}/auth/github/login?return_to=${encodeURIComponent(location.href)}`}>使用 GitHub 登录</a></Window>}
       {!session&&user&&<Window title="SESSION_SETUP" tag="01" className="wide"><div className="field"><span>COURSE</span><input value={course} onChange={e=>setCourse(e.target.value)}/></div><div className="field"><span>TITLE</span><input value={title} onChange={e=>setTitle(e.target.value)}/></div><div className="field"><span>HOTWORDS / comma separated</span><input value={hotwords} onChange={e=>setHotwords(e.target.value)}/></div><p className="time">开始即确认你已获得课堂录音许可。录音时请保持本页在前台。</p></Window>}
-      {session&&<><Window title="CAPTURE_MONITOR" tag={session.status}><div style={{fontSize:38,fontWeight:800}}>{String(Math.floor(seconds/60)).padStart(2,"0")}:{String(seconds%60).padStart(2,"0")}</div><div className="meter"><i style={{width:`${level}%`}}/></div><div className="statusline"><span>UPLOADED {session.parts.length}</span><span>{uploading?"SYNCING":"SYNCED"}</span><span>CAPTION {transport.toUpperCase()}</span><span>KEEP SCREEN ON</span></div>{transport==="retrying"&&<p className="warn">实时字幕连接已断开；录音仍会保存并持续上传。</p>}{session.error&&<p className="warn">{session.error}</p>}</Window>
+      {session&&<><Window title="CAPTURE_MONITOR" tag={session.status}><div style={{fontSize:38,fontWeight:800}}>{String(Math.floor(seconds/60)).padStart(2,"0")}:{String(seconds%60).padStart(2,"0")}</div><div className="meter"><i style={{width:`${level}%`}}/></div><div className="statusline"><span>UPLOADED {session.parts.length}</span><span>{uploading?"SYNCING":"SYNCED"}</span><span>CAPTION {transport.toUpperCase()}</span><span>KEEP SCREEN ON</span></div>{session.status==="organizing"&&<div className="organize-countdown"><div className="countdown-head"><span>QWEN // STRUCTURING REVIEW_DRAFT</span><strong>{organizeRemaining===null?"CALCULATING":organizeRemaining>0?`ETA ${eta(organizeRemaining)}`:"FINALIZING"}</strong></div><div className={`terminal-progress ${organizeRemaining===0?"indeterminate":""}`}><i style={organizeRemaining!==null?{width:`${Math.min(96,Math.max(4,(1-organizeRemaining/(estimate?.estimated_duration_seconds||30))*100))}%`}:undefined}/></div><small>{organizeRemaining===0?"模型仍在生成结构化内容，请保持页面开启…":"正在提取摘要、知识点、日程与 DDL…"}</small></div>}{transport==="retrying"&&session.status==="recording"&&<p className="warn">实时字幕连接已断开；录音仍会保存并持续上传。</p>}{session.error&&<p className="warn">{session.error}</p>}</Window>
       <Window title="LIVE_TRANSCRIPT" tag="EN→ZH"><div>{session.transcript.length?session.transcript.map(s=><div className="caption" key={s.id}><span className="time">{(s.start_ms/1000).toFixed(1)}s · {s.id}</span><p>{s.source}</p><p className="zh">{s.translation}</p></div>):<p className="time">等待语音片段…</p>}</div></Window></>}
       {session?.draft&&<><Window title="REVIEW_DRAFT" tag={session.draft_source==="qwen_mcp"?"QWEN MCP":"AI SETUP REQUIRED"} className="wide"><div className="field"><span>SUMMARY</span><textarea value={session.draft.summary} onChange={e=>setSession({...session,draft:{...session.draft!,summary:e.target.value}})} onBlur={e=>saveDraft(e.target.value)}/></div><h3>KEY POINTS</h3>{session.draft.key_points.map(x=><p key={x}>› {x}</p>)}<h3>SCHEDULE / DDL</h3><div className="schedule">{session.draft.schedule.map(x=><div key={x.id}><strong>{x.title}</strong><br/><small>{x.datetime||"待确认"} · {x.status}</small></div>)}</div>{session.draft.pending_confirmation.map(x=><p className="warn" key={x}>⚠ {x}</p>)}</Window></>}
       {session?.published_path&&<Window title="PUBLISHED" tag="GIT" className="wide"><p>✓ 已发布到 Obsidian</p><code>{session.published_path}</code></Window>}
     </div>
     {error&&<p className="warn">ERROR: {error}</p>}
-    <div className="actions">{!session&&user&&<button className="btn primary" onClick={start}>● 开始录音</button>}{active&&<><button className="btn stop" onClick={stop}>■ 停止并整理</button><button className="btn" onClick={speak}>朗读最近译文</button></>}{session?.status==="draft_ready"&&<><button className="btn" onClick={organize}>AI 重新整理</button><button className="btn primary" disabled={session.draft_source!=="qwen_mcp"} onClick={publish}>确认并发布</button><button className="btn" onClick={()=>setSession(null)}>暂存并返回</button></>}</div>
+    <div className="actions">{!session&&user&&<button className="btn primary" onClick={start}>● 开始录音</button>}{active&&<><button className="btn stop" onClick={stop}>■ 停止并整理</button><button className="btn" onClick={speak}>朗读最近译文</button></>}{session?.status==="draft_ready"&&<><button className="btn" onClick={requestOrganize}>AI 重新整理</button><button className="btn primary" disabled={session.draft_source!=="qwen_mcp"} onClick={publish}>确认并发布</button><button className="btn" onClick={()=>setSession(null)}>暂存并返回</button></>}</div>
+    {estimateOpen&&<div className="dialog-backdrop" role="presentation" onMouseDown={e=>{if(e.target===e.currentTarget&&!organizing)setEstimateOpen(false)}}><section className="dialog" role="dialog" aria-modal="true" aria-labelledby="cost-dialog-title">
+      <div className="bar"><span id="cost-dialog-title">AI_ORGANIZE // COST_CHECK</span><button className="dialog-close" aria-label="关闭" disabled={organizing} onClick={()=>setEstimateOpen(false)}>×</button></div>
+      <div className="dialog-content">
+        <div className="dialog-status"><span className="pulse">●</span><div><strong>即将重新生成课程纪要</strong><small>提交后将调用千问模型，现有草稿会在生成成功后更新。</small></div></div>
+        {estimateLoading&&<div className="estimate-loading"><i/><span>正在读取转写并估算 Token…</span></div>}
+        {estimateError&&<p className="warn">ERROR: {estimateError}</p>}
+        {estimate&&<>
+          <div className="cost-total"><span>预计本次费用</span><strong>{money(estimate.estimated_total_cost)}</strong><small>{estimate.currency} · 预估值</small></div>
+          <div className="cost-grid">
+            <div><span>INPUT</span><strong>{token(estimate.estimated_input_tokens)}</strong><small>TOKENS</small></div>
+            <div><span>OUTPUT</span><strong>≈ {token(estimate.estimated_output_tokens)}</strong><small>TOKENS</small></div>
+            <div><span>TOTAL</span><strong>≈ {token(estimate.estimated_total_tokens)}</strong><small>TOKENS</small></div>
+          </div>
+          <div className="rate-table"><div><span>MODEL</span><b>{estimate.model}</b></div><div><span>ESTIMATED TIME</span><b>≈ {eta(estimate.estimated_duration_seconds)}</b></div><div><span>PRICING TIER</span><b>{estimate.pricing_tier}</b></div><div><span>INPUT RATE</span><b>¥{estimate.input_rate_per_million} / 1M</b></div><div><span>OUTPUT RATE</span><b>¥{estimate.output_rate_per_million} / 1M</b></div><div><span>REGION</span><b>{estimate.pricing_region}</b></div></div>
+          <p className="estimate-note">* 根据当前转写与结构化输出长度估算；实际 Token 和费用以千问账单为准。未假设缓存命中。</p>
+        </>}
+      </div>
+      <div className="dialog-actions"><button className="btn" disabled={organizing} onClick={()=>setEstimateOpen(false)}>取消</button><button className="btn primary" disabled={!estimate||estimateLoading||organizing} onClick={confirmOrganize}>{organizing?"提交中…":"确认并开始整理"}</button></div>
+    </section></div>}
     <footer className="footer">LOCAL AUDIO QUEUE / EVIDENCE TIMESTAMPS / REVIEW BEFORE PUBLISH</footer>
   </main>
 }

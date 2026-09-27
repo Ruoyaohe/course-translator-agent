@@ -10,6 +10,13 @@ def safe_name(value: str) -> str:
     return value[:100] or "未命名"
 
 
+def note_relative_path(session: CourseSession, root: Path | None = None) -> Path:
+    root = root or Path("Note/NTU课堂记录")
+    course = safe_name(session.course)
+    filename = f"{session.created_at[:10]}—{course}—{safe_name(session.title)}.md"
+    return root / "课程" / course / filename
+
+
 def mermaid(draft: CourseDraft) -> str:
     rows = ["mindmap"]
     by_parent: dict[str | None, list] = {}
@@ -29,13 +36,28 @@ def mermaid(draft: CourseDraft) -> str:
 def note_markdown(session: CourseSession) -> str:
     draft = session.draft
     assert draft is not None
-    lines = ["---", f"course: {session.course}", f"title: {session.title}",
-             f"date: {session.created_at[:10]}", f"timezone: {session.timezone}",
-             f"source_language: {session.source_language}", f"target_language: {session.target_language}",
-             "status: reviewed", "tags: [NTU, 课堂记录]", "---", "", f"# {session.title}", "",
-             "## 课程摘要", "", draft.summary, "", "## 重点", ""]
+    duration_ms = max((segment.end_ms for segment in session.transcript), default=0)
+    duration = f"{duration_ms // 60000}分{duration_ms % 60000 // 1000:02d}秒（据录音时间戳）"
+    heading = f"{session.course}：{session.title}"
+    lines = ["---", "type: note", "category: ntu-class-record", f"course: {session.course}",
+             f"date: {session.created_at[:10]}", "format: 课堂录音与AI整理", f"duration: {duration}",
+             "source: 课堂录音经本地转写与千问AI整理", f"source_title: {heading}", "tags:",
+             "  - NTU", "  - 课堂记录", "---", "", f"# {heading}", "",
+             f"> 本笔记依据课堂录音的机器转写整理，日期、专有名词及作业要求仍应以学校通知和教师原文为准。", "",
+             "## 课程摘要", "", draft.summary, "", "## 本节重点", ""]
     lines += [f"- {item}" for item in draft.key_points]
-    lines += ["", "## 日程与任务", ""]
+    lines += ["", "## 时间线", ""]
+    timeline = []
+    for item in draft.schedule:
+        for evidence in item.evidence:
+            start = evidence.start_ms // 1000
+            end = evidence.end_ms // 1000
+            timeline.append((evidence.start_ms, f"| {start // 60:02d}:{start % 60:02d}–{end // 60:02d}:{end % 60:02d} | {item.title} |"))
+    if timeline:
+        lines += ["| 音频位置 | 内容 |", "| --- | --- |"] + [row for _, row in sorted(timeline)]
+    else:
+        lines += ["- 暂无可核验的分段时间线。"]
+    lines += ["", "## 日程与待办", ""]
     for item in draft.schedule:
         when = item.datetime or "待确认"
         refs = ", ".join(f"{e.segment_id} @{e.start_ms/1000:.1f}s" for e in item.evidence)
@@ -59,7 +81,8 @@ def controlled_block(session: CourseSession, kind: str) -> str:
     items = [x for x in session.draft.schedule if x.kind == kind]
     begin = f"<!-- NTU:{session.id}:{kind}:BEGIN -->"
     end = f"<!-- NTU:{session.id}:{kind}:END -->"
-    rows = [begin, f"### {session.created_at[:10]} · [[{session.title}/课程纪要|{session.title}]]"]
+    note = note_relative_path(session).with_suffix("").as_posix()
+    rows = [begin, f"### {session.created_at[:10]} · [[{note}|{session.course}：{session.title}]]"]
     rows += [f"- [ ] {x.title} — {x.datetime or '待确认'}" for x in items]
     rows.append(end)
     return "\n".join(rows)
@@ -72,4 +95,3 @@ def upsert_block(path: Path, session: CourseSession, kind: str) -> None:
     content = pattern.sub(block, old) if pattern.search(old) else old.rstrip() + "\n\n" + block + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
-

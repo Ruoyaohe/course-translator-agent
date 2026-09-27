@@ -28,6 +28,14 @@ def test_review_and_publish_workflow(tmp_path, monkeypatch):
     assert uploaded.status_code == 200
     assert uploaded.json()["received"] == [0]
 
+    estimate = client.get(f"/api/sessions/{sid}/organize-estimate")
+    assert estimate.status_code == 200
+    assert estimate.json()["model"] == "qwen3.7-flash"
+    assert estimate.json()["estimated_total_tokens"] > 0
+    assert estimate.json()["estimated_total_cost"] > 0
+    assert 20 <= estimate.json()["estimated_duration_seconds"] <= 180
+    assert estimate.json()["cache_assumed"] is False
+
     finished = client.post(f"/api/sessions/{sid}/finish", headers={"Idempotency-Key":"finish-1"})
     assert finished.status_code == 200
     for _ in range(50):
@@ -40,9 +48,11 @@ def test_review_and_publish_workflow(tmp_path, monkeypatch):
     published = client.post(f"/api/sessions/{sid}/publish", headers={"Idempotency-Key":"publish-1"})
     assert published.status_code == 200
     assert published.json()["status"] == "published"
-    note = next(vault.rglob("课程纪要.md"))
+    note = next(vault.rglob("2026-*Film Art*Production Design.md"))
     assert "待确认" in note.read_text(encoding="utf-8")
-    assert next(vault.rglob("脑图.mmd")).exists()
+    assert "category: ntu-class-record" in note.read_text(encoding="utf-8")
+    assert not list(vault.rglob("完整原文.md"))
+    assert not list(vault.rglob("脑图.mmd"))
 
     again = client.post(f"/api/sessions/{sid}/publish", headers={"Idempotency-Key":"publish-1"})
     assert again.status_code == 200
@@ -74,3 +84,14 @@ def test_local_finalize_requires_ai_instead_of_copying_transcript(monkeypatch):
     assert draft.key_points == []
     assert draft.schedule == []
     assert "我们讨论了纪录片伦理" not in draft.summary
+
+
+def test_qwen_flash_estimate_uses_higher_tier_for_long_transcript():
+    from services.api.app.models import TranscriptSegment
+    from services.api.app.pricing import estimate_organize
+    transcript = [TranscriptSegment(id="seg-long", start_ms=0, end_ms=3_600_000,
+        source="lecture content " * 9_000, translation="课程内容" * 12_000)]
+    estimate = estimate_organize(transcript)
+    assert estimate["estimated_input_tokens"] > 32_000
+    assert estimate["pricing_tier"] == "32K < INPUT <= 256K"
+    assert estimate["input_rate_per_million"] == .749

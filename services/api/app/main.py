@@ -13,6 +13,7 @@ from fastapi.responses import PlainTextResponse
 from .auth import current_user, router as auth_router, verify as verify_auth
 from .models import CourseDraft, CourseSession, SessionCreate, SessionStatus, now_iso
 from .provider import get_provider
+from .pricing import estimate_organize
 from .publish import publish_to_obsidian
 from .render import mermaid, note_markdown, transcript_markdown
 from .store import JsonStore
@@ -178,6 +179,14 @@ async def organize(session_id: str, background_tasks: BackgroundTasks, idempoten
     session.updated_at = now_iso(); STORE.save(session)
     background_tasks.add_task(process_session, session.id)
     return session
+
+
+@app.get("/api/sessions/{session_id}/organize-estimate")
+def organize_estimate(session_id: str):
+    session = load(session_id)
+    if not session.transcript:
+        raise HTTPException(409, "Transcript is empty")
+    return estimate_organize(session.transcript)
 
 
 @app.patch("/api/sessions/{session_id}/draft", response_model=CourseSession)

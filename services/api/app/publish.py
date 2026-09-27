@@ -4,7 +4,7 @@ import os
 import subprocess
 from pathlib import Path
 from .models import CourseSession
-from .render import mermaid, note_markdown, safe_name, transcript_markdown, upsert_block
+from .render import note_markdown, note_relative_path, upsert_block
 
 
 def _git(path: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -25,12 +25,10 @@ def publish_to_obsidian(session: CourseSession) -> tuple[str, str | None]:
         if remote:
             _git(vault, "pull", "--ff-only")
 
-    folder = root / safe_name(session.course) / f"{session.created_at[:10]} {safe_name(session.title)}"
-    target = vault / folder
-    target.mkdir(parents=True, exist_ok=True)
-    (target / "课程纪要.md").write_text(note_markdown(session), encoding="utf-8")
-    (target / "完整原文.md").write_text(transcript_markdown(session), encoding="utf-8")
-    (target / "脑图.mmd").write_text(mermaid(session.draft), encoding="utf-8")
+    note_path = note_relative_path(session, root)
+    target = vault / note_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(note_markdown(session), encoding="utf-8")
     upsert_block(vault / root / "NTU课程日程.md", session, "class")
     upsert_block(vault / root / "NTU作业与DDL.md", session, "ddl")
 
@@ -44,5 +42,4 @@ def publish_to_obsidian(session: CourseSession) -> tuple[str, str | None]:
             if remote:
                 _git(vault, "push")
             commit = _git(vault, "rev-parse", "HEAD").stdout.strip()
-    return str(folder / "课程纪要.md"), commit
-
+    return str(note_path), commit
