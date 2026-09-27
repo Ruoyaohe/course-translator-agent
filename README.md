@@ -72,7 +72,7 @@ Note/NTU课堂记录/
 ### 1. 克隆与安装
 
 ```bash
-git clone <YOUR_REPOSITORY_URL>
+git clone https://github.com/Ruoyaohe/ntu-course-agent.git
 cd ntu-course-agent
 
 python3.11 -m venv .venv311
