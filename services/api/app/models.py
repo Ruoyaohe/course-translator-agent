@@ -65,7 +65,8 @@ class CourseDraft(BaseModel):
 class SessionCreate(BaseModel):
     course: str = Field(min_length=1, max_length=120)
     title: str = Field(min_length=1, max_length=200)
-    source_language: str = "en"
+    school: str | None = Field(default=None, max_length=120)
+    source_language: str = "auto"
     target_language: str = "zh-CN"
     timezone: str = "Asia/Hong_Kong"
     hotwords: list[str] = Field(default_factory=list, max_length=100)
@@ -85,6 +86,7 @@ class CourseSession(BaseModel):
     id: str
     course: str
     title: str
+    school: str | None = None
     source_language: str
     target_language: str
     timezone: str

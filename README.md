@@ -1,17 +1,18 @@
-# NTU Course Agent
+# Course Translator Agent
 
-一个面向课堂场景的移动端 PWA：录音、英中实时字幕、AI 课程纪要、DDL 提取、脑图生成，并在人工确认后发布到本地 Obsidian Vault。
+一个面向课堂场景的课程翻译 Agent：电脑麦克风录音、多语言识别、中文实时字幕、AI 课程纪要、DDL 提取、脑图生成，并在人工确认后发布到本地 Obsidian Vault。
 
 > 当前版本是个人可运行的 MVP。录音与实时转写可以留在本机；生成结构化课程纪要需要用户自己的阿里云百炼千问 API Key，并按阿里云实际用量付费。
 
 ## 功能
 
-- 手机或电脑浏览器录音，音频分块写入 IndexedDB，支持断网缓存与恢复上传。
-- 本地英文语音识别与英中实时字幕。
+- 使用电脑内置或蓝牙麦克风录音，音频分块写入 IndexedDB，支持断网缓存与恢复上传。
+- 支持自动语言识别，也可指定英语、中文、法语、德语、西班牙语、意大利语、葡萄牙语、日语、韩语、阿拉伯语或印地语；字幕统一翻译为中文。
+- 学校或机构名称为可选属性，未勾选时不会写入笔记。
 - 使用 `qwen3.7-flash` 生成摘要、重点、时间线、日程、DDL、待确认事项和 Mermaid 脑图。
 - 调用 AI 前显示预计 Token、阶梯单价、预计费用和处理时间。
 - 所有课程笔记先进入 `REVIEW_DRAFT`，由用户审核后才能写入 Obsidian。
-- 发布路径、文件名和 frontmatter 与 NTU 课堂笔记目录保持一致。
+- 发布前核对路径、文件名和 frontmatter，按课程录制当天的本地日期命名。
 - 提供 Streamable HTTP MCP Server 和配套 Codex skill。
 
 ## 费用与外部服务
@@ -46,12 +47,12 @@ API Key 只应写入服务端 `.env`。不要把 Key 放入浏览器代码、提
 默认笔记结构：
 
 ```text
-Note/NTU课堂记录/
+Note/课程记录/
 ├── 课程/
 │   └── 课程名称/
 │       └── YYYY-MM-DD—课程名称—课堂标题.md
-├── NTU课程日程.md
-└── NTU作业与DDL.md
+├── 课程日程.md
+└── 作业与DDL.md
 ```
 
 应用不会另外保存“完整原文.md”。机器转写用于生成纪要和证据时间戳，发布时只输出审核后的单篇课程笔记及汇总条目。
@@ -72,8 +73,8 @@ Note/NTU课堂记录/
 ### 1. 克隆与安装
 
 ```bash
-git clone https://github.com/Ruoyaohe/ntu-course-agent.git
-cd ntu-course-agent
+git clone https://github.com/Ruoyaohe/course-translator-agent.git
+cd course-translator-agent
 
 python3.11 -m venv .venv311
 source .venv311/bin/activate
@@ -115,7 +116,7 @@ LOCAL_MODEL_ROOT=/absolute/path/to/your/local-asr-models
 
 # 你的本地 Obsidian Vault 绝对路径
 OBSIDIAN_REPO_PATH=/absolute/path/to/your/obsidian-vault
-OBSIDIAN_NOTES_ROOT=Note/NTU课堂记录
+OBSIDIAN_NOTES_ROOT=Note/课程记录
 ```
 
 `.env`、录音、数据库、模型文件和课程隐私数据已在 `.gitignore` 中排除。

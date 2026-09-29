@@ -3,7 +3,7 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 
 API = os.environ.get("API_BASE_URL", "http://localhost:8000")
-mcp = FastMCP("NTU Course Agent", stateless_http=True)
+mcp = FastMCP("Course Translator Agent", stateless_http=True)
 
 
 async def request(method: str, path: str, **kwargs):

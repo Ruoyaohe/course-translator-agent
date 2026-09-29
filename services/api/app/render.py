@@ -23,7 +23,7 @@ def recording_date(session: CourseSession) -> str:
 
 
 def note_relative_path(session: CourseSession, root: Path | None = None) -> Path:
-    root = root or Path("Note/NTU课堂记录")
+    root = root or Path("Note/课程记录")
     course = safe_name(session.course)
     default_filename = f"{recording_date(session)}—{course}—{safe_name(session.title)}.md"
     filename = safe_name(session.publish_filename or default_filename)
@@ -58,7 +58,10 @@ def note_markdown(session: CourseSession) -> str:
     note_type = str(properties.get("type", "note")); category = str(properties.get("category", "ntu-class-record"))
     note_format = str(properties.get("format", "课堂录音与AI整理")); tags = properties.get("tags", ["NTU", "课堂记录"])
     if not isinstance(tags, list): tags = ["NTU", "课堂记录"]
-    lines = ["---", f"type: {note_type}", f"category: {category}", f"course: {session.course}",
+    lines = ["---", f"type: {note_type}", f"category: {category}", f"course: {session.course}"]
+    if session.school:
+        lines.append(f"school: {session.school}")
+    lines += [
              f"date: {recording_date(session)}", f"format: {note_format}", f"duration: {duration}",
              "source: 课堂录音经本地转写与千问AI整理", f"source_title: {heading}", "tags:",
              *[f"  - {tag}" for tag in tags], "---", "", f"# {heading}", "",
@@ -98,8 +101,8 @@ def transcript_markdown(session: CourseSession) -> str:
 def controlled_block(session: CourseSession, kind: str) -> str:
     assert session.draft
     items = [x for x in session.draft.schedule if x.kind == kind]
-    begin = f"<!-- NTU:{session.id}:{kind}:BEGIN -->"
-    end = f"<!-- NTU:{session.id}:{kind}:END -->"
+    begin = f"<!-- COURSE:{session.id}:{kind}:BEGIN -->"
+    end = f"<!-- COURSE:{session.id}:{kind}:END -->"
     note = note_relative_path(session).with_suffix("").as_posix()
     rows = [begin, f"### {recording_date(session)} · [[{note}|{session.course}：{session.title}]]"]
     rows += [f"- [ ] {x.title} — {x.datetime or '待确认'}" for x in items]
@@ -108,9 +111,9 @@ def controlled_block(session: CourseSession, kind: str) -> str:
 
 
 def upsert_block(path: Path, session: CourseSession, kind: str) -> None:
-    old = path.read_text(encoding="utf-8") if path.exists() else f"# {'NTU作业与DDL' if kind == 'ddl' else 'NTU课程日程'}\n\n"
+    old = path.read_text(encoding="utf-8") if path.exists() else f"# {'作业与DDL' if kind == 'ddl' else '课程日程'}\n\n"
     block = controlled_block(session, kind)
-    pattern = re.compile(rf"<!-- NTU:{re.escape(session.id)}:{kind}:BEGIN -->.*?<!-- NTU:{re.escape(session.id)}:{kind}:END -->", re.S)
+    pattern = re.compile(rf"<!-- COURSE:{re.escape(session.id)}:{kind}:BEGIN -->.*?<!-- COURSE:{re.escape(session.id)}:{kind}:END -->", re.S)
     content = pattern.sub(block, old) if pattern.search(old) else old.rstrip() + "\n\n" + block + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")

@@ -1,5 +1,5 @@
 {
-  "name": "@ntu-course-agent/web",
+  "name": "@course-translator-agent/web",
   "private": true,
   "version": "0.1.0",
   "scripts": {

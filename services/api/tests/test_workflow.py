@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 def make_client(tmp_path, monkeypatch):
     monkeypatch.setenv("NTU_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("OBSIDIAN_REPO_PATH", str(tmp_path / "vault"))
+    monkeypatch.setenv("OBSIDIAN_NOTES_ROOT", "Note/课程记录")
     monkeypatch.setenv("COURSE_PROVIDER", "mock")
     import importlib
     from services.api.app import main
@@ -59,8 +60,8 @@ def test_review_and_publish_workflow(tmp_path, monkeypatch):
 
     again = client.post(f"/api/sessions/{sid}/publish", headers={"Idempotency-Key":"publish-1"})
     assert again.status_code == 200
-    ddl = (vault / "Note/NTU课堂记录/NTU作业与DDL.md").read_text(encoding="utf-8")
-    assert ddl.count(f"NTU:{sid}:ddl:BEGIN") == 1
+    ddl = (vault / "Note/课程记录/作业与DDL.md").read_text(encoding="utf-8")
+    assert ddl.count(f"COURSE:{sid}:ddl:BEGIN") == 1
 
 
 def test_rejects_bad_hash_and_missing_consent(tmp_path, monkeypatch):

@@ -26,7 +26,7 @@ class MockCourseProvider:
         return TranscriptSegment(id=f"seg-{sequence:04d}", start_ms=start, end_ms=start + 4500,
                                  source=source, translation=translation)
 
-    async def caption_audio(self, path: Path, sequence: int) -> TranscriptSegment:
+    async def caption_audio(self, path: Path, sequence: int, source_language: str = "auto") -> TranscriptSegment:
         return await self.live_caption(sequence)
 
     async def finalize(self, transcript: list[TranscriptSegment], course: str) -> CourseDraft:
@@ -77,6 +77,17 @@ class QwenCourseProvider(MockCourseProvider):
     async def finalize(self, transcript: list[TranscriptSegment], course: str) -> CourseDraft:
         return await asyncio.to_thread(self._finalize, transcript, course)
 
+    def translate_to_chinese(self, text: str, source_language: str = "auto") -> str:
+        if not text.strip():
+            return ""
+        payload = json.dumps({"model": self.model, "messages": [
+            {"role": "system", "content": "将课堂语音转写准确翻译成简洁中文。只输出译文，不解释。保留人名、术语、日期和数字。"},
+            {"role": "user", "content": text}], "temperature": 0}).encode()
+        request = urllib.request.Request("https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+            data=payload, headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return json.load(response)["choices"][0]["message"]["content"].strip()
+
 
 class LocalCourseProvider(MockCourseProvider):
     captions_from_upload = True
@@ -86,19 +97,37 @@ class LocalCourseProvider(MockCourseProvider):
         sys.path.insert(0, str(model_root))
         from engine import Models
         self.models = Models()
+        self.multilingual_asr = None
+        self.multilingual_model = os.environ.get("MULTILINGUAL_WHISPER_MODEL", "base")
         self.ai = QwenCourseProvider() if os.environ.get("DASHSCOPE_API_KEY") else None
         self.draft_source = "qwen_mcp" if self.ai else "ai_unconfigured"
 
-    def _caption(self, path: Path, sequence: int) -> TranscriptSegment:
+    def _caption(self, path: Path, sequence: int, source_language: str) -> TranscriptSegment:
         from faster_whisper.audio import decode_audio
         audio = decode_audio(str(path), sampling_rate=16000)
-        source, translation, _, _ = self.models.process(audio)
+        if source_language == "en":
+            source, translation, _, _ = self.models.process(audio)
+        else:
+            if self.multilingual_asr is None:
+                from faster_whisper import WhisperModel
+                self.multilingual_asr = WhisperModel(self.multilingual_model, device="cpu", compute_type="int8", cpu_threads=4, num_workers=1)
+            language = None if source_language == "auto" else source_language
+            segments, info = self.multilingual_asr.transcribe(audio, language=language, beam_size=1,
+                temperature=0, condition_on_previous_text=False, vad_filter=False, without_timestamps=True)
+            source = " ".join(segment.text.strip() for segment in segments).strip()
+            detected = getattr(info, "language", source_language)
+            if detected == "zh":
+                translation = source
+            elif self.ai:
+                translation = self.ai.translate_to_chinese(source, detected)
+            else:
+                translation = source
         start = sequence * 3000
         return TranscriptSegment(id=f"seg-{sequence:04d}", start_ms=start, end_ms=start + 3000,
                                  source=source or "[未识别到清晰语音]", translation=translation)
 
-    async def caption_audio(self, path: Path, sequence: int) -> TranscriptSegment:
-        return await asyncio.to_thread(self._caption, path, sequence)
+    async def caption_audio(self, path: Path, sequence: int, source_language: str = "auto") -> TranscriptSegment:
+        return await asyncio.to_thread(self._caption, path, sequence, source_language)
 
     async def finalize(self, transcript: list[TranscriptSegment], course: str) -> CourseDraft:
         if self.ai:

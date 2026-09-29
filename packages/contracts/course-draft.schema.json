@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ntu-course-agent.local/schemas/course-draft.json",
+  "$id": "https://course-translator-agent.local/schemas/course-draft.json",
   "title": "CourseDraft",
   "type": "object",
   "required": ["summary", "key_points", "schedule", "mindmap", "pending_confirmation"],
@@ -21,4 +21,3 @@
       "properties": {"id": {"type": "string"}, "label": {"type": "string"}, "parent_id": {"type": ["string", "null"]}}}
   }
 }
-
