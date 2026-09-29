@@ -1,13 +1,13 @@
 # Course Translator Agent
 
-一个面向课堂场景的课程翻译 Agent：电脑麦克风录音、多语言识别、中文实时字幕、AI 课程纪要、DDL 提取、脑图生成，并在人工确认后发布到本地 Obsidian Vault。
+一个面向英语课堂场景的课程翻译 Agent：电脑麦克风录音、英文识别、中文实时字幕、AI 课程纪要、DDL 提取、脑图生成，并在人工确认后发布到本地 Obsidian Vault。
 
 > 当前版本是个人可运行的 MVP。录音与实时转写可以留在本机；生成结构化课程纪要需要用户自己的阿里云百炼千问 API Key，并按阿里云实际用量付费。
 
 ## 功能
 
 - 使用电脑内置或蓝牙麦克风录音，音频分块写入 IndexedDB，支持断网缓存与恢复上传。
-- 支持自动语言识别，也可指定英语、中文、法语、德语、西班牙语、意大利语、葡萄牙语、日语、韩语、阿拉伯语或印地语；字幕统一翻译为中文。
+- 针对英语课堂识别并输出中文实时字幕，使用轻量的本地英语模型降低 Intel Mac 上的处理延迟。
 - 学校或机构名称为可选属性，未勾选时不会写入笔记。
 - 使用 `qwen3.7-flash` 生成摘要、重点、时间线、日程、DDL、待确认事项和 Mermaid 脑图。
 - 调用 AI 前显示预计 Token、阶梯单价、预计费用和处理时间。
@@ -113,7 +113,6 @@ QWEN_TEXT_MODEL=qwen3.7-flash
 # local：本地语音识别 + 千问课程整理
 COURSE_PROVIDER=local
 LOCAL_MODEL_ROOT=/absolute/path/to/your/local-asr-models
-MULTILINGUAL_WHISPER_MODEL=/absolute/path/to/your/local-asr-models/models/whisper-base
 
 # 你的本地 Obsidian Vault 绝对路径
 OBSIDIAN_REPO_PATH=/absolute/path/to/your/obsidian-vault
