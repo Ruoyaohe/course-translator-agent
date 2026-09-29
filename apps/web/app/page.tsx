@@ -39,25 +39,29 @@ export default function Home() {
   const [user,setUser]=useState<{login:string}|null>(null); const [authReady,setAuthReady]=useState(false);
   const capture=useRef<CaptureController|null>(null); const stream=useRef<MediaStream|null>(null); const seq=useRef(0);
   const socket=useRef<WebSocket|null>(null); const startAt=useRef(0); const speaking=useRef(false);
-  const flushing=useRef(false);
+  const flushPromise=useRef<Promise<boolean>|null>(null);
 
   useEffect(()=>{if(process.env.NODE_ENV==="development"){navigator.serviceWorker?.getRegistrations().then(items=>items.forEach(item=>item.unregister()));caches?.keys().then(keys=>keys.filter(key=>key.startsWith("ntu-agent-")).forEach(key=>caches.delete(key)))}else{navigator.serviceWorker?.register("/sw.js").catch(()=>{})}api("/health").then(x=>setProviderName(x.provider)).catch(()=>{});api("/auth/me").then(x=>setUser(x.user)).catch(()=>setUser(null)).finally(()=>setAuthReady(true));const sync=()=>setOnline(navigator.onLine);const devices=()=>refreshAudioInputs(false).catch(()=>{});sync();devices();addEventListener("online",sync);addEventListener("offline",sync);navigator.mediaDevices?.addEventListener("devicechange",devices);return()=>{removeEventListener("online",sync);removeEventListener("offline",sync);navigator.mediaDevices?.removeEventListener("devicechange",devices);capture.current?.stop().catch(()=>{});stream.current?.getTracks().forEach(track=>track.stop())}},[]);
   useEffect(()=>{if(online&&session)flushAll(session.id).catch(()=>{})},[online]);
   useEffect(()=>{if(!session||session.status!=="recording")return;const id=setInterval(()=>setElapsed(Date.now()-startAt.current),500);return()=>clearInterval(id)},[session?.status]);
   useEffect(()=>{if(!session||session.status!=="recording")return;const id=setInterval(()=>flushAll(session.id).catch(()=>{}),3000);return()=>clearInterval(id)},[session?.id,session?.status]);
-  useEffect(()=>{if(!session||!["uploading","transcribing","organizing"].includes(session.status))return;const id=setInterval(async()=>{const next=await api(`/api/sessions/${session.id}`);setSession(next)},900);return()=>clearInterval(id)},[session?.id,session?.status]);
+  useEffect(()=>{if(!session||!["uploading","transcribing","organizing"].includes(session.status))return;const id=setInterval(()=>{api(`/api/sessions/${session.id}`).then(setSession).catch(e=>setError(`处理状态连接失败：${e instanceof Error?e.message:String(e)}`))},900);return()=>clearInterval(id)},[session?.id,session?.status]);
   useEffect(()=>{if(session?.status!=="organizing")return;if(!organizeDeadline.current)organizeDeadline.current=Date.now()+30_000;const tick=()=>setOrganizeRemaining(Math.max(0,Math.ceil((organizeDeadline.current-Date.now())/1000)));tick();const id=setInterval(tick,250);return()=>clearInterval(id)},[session?.status]);
   useEffect(()=>{if(session?.status==="draft_ready"||session?.status==="failed"){setOrganizeRemaining(null);organizeDeadline.current=0}},[session?.status]);
 
   async function flush(part:StoredPart) {
-    if(!navigator.onLine)return;
+    if(!navigator.onLine)throw new Error("网络离线，音频已保存在本机等待重试");
     const digest=await sha256(part.blob); const form=new FormData(); form.append("audio",part.blob,"part.wav");
     const result=await api(`/api/sessions/${part.sessionId}/audio-parts?sequence=${part.sequence}&sha256=${digest}`,{method:"POST",body:form});
     await markUploaded(part);
     setSession(current=>current&&current.id===part.sessionId?{...current,parts:result.received,
       transcript:result.caption&&!current.transcript.some(x=>x.id===result.caption.id)?[...current.transcript,result.caption].sort((a,b)=>a.start_ms-b.start_ms):current.transcript}:current);
   }
-  async function flushAll(id:string) { if(flushing.current)return;flushing.current=true;setUploading(true);try{for(const p of await pendingParts(id))await flush(p);setTransport(socket.current?.readyState===1?"live":"retrying")}finally{flushing.current=false;setUploading(false)} }
+  async function flushAll(id:string):Promise<boolean> {
+    if(flushPromise.current)return flushPromise.current;
+    const task=(async()=>{setUploading(true);try{for(const p of await pendingParts(id))await flush(p);setTransport(socket.current?.readyState===1?"live":"retrying");return true}catch(e){setTransport("retrying");setError(`音频上传暂时失败：${e instanceof Error?e.message:String(e)}。录音仍保存在本机，可点击“重试停止并整理”。`);return false}finally{setUploading(false);flushPromise.current=null}})();
+    flushPromise.current=task;return task;
+  }
 
   async function refreshAudioInputs(requestPermission=true) {
     setDeviceLoading(true); setError("");
@@ -96,9 +100,11 @@ export default function Home() {
   }
 
   async function stop() {
-    if(!session)return;await capture.current?.stop();capture.current=null;stream.current?.getTracks().forEach(t=>t.stop());stream.current=null;socket.current?.close();
-    await new Promise(r=>setTimeout(r,250)); await flushAll(session.id);
-    const next=await api(`/api/sessions/${session.id}/finish`,{method:"POST",headers:{"Idempotency-Key":crypto.randomUUID()}});setSession(next);
+    if(!session)return;setError("");
+    try{await capture.current?.stop();capture.current=null;stream.current?.getTracks().forEach(t=>t.stop());stream.current=null;socket.current?.close();
+      await new Promise(r=>setTimeout(r,250));const uploaded=await flushAll(session.id);if(!uploaded)return;
+      const next=await api(`/api/sessions/${session.id}/finish`,{method:"POST",headers:{"Idempotency-Key":crypto.randomUUID()}});setSession(next)
+    }catch(e){setTransport("retrying");setError(`停止整理失败：${e instanceof Error?e.message:String(e)}。音频已保存在本机，请确认 API 服务后重试。`)}
   }
   function speak() { const text=session?.transcript.at(-1)?.translation;if(!text)return;speaking.current=true;const utter=new SpeechSynthesisUtterance(text);utter.lang="zh-CN";utter.onend=()=>speaking.current=false;utter.onerror=()=>speaking.current=false;speechSynthesis.speak(utter) }
   async function saveDraft(summary:string){if(!session?.draft)return;const next=await api(`/api/sessions/${session.id}/draft`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({...session.draft,summary})});setSession(next)}
@@ -125,7 +131,7 @@ export default function Home() {
       {session?.published_path&&<Window title="PUBLISHED" tag="GIT" className="wide"><p>✓ 已发布到 Obsidian</p><code>{session.published_path}</code></Window>}
     </div>
     {error&&<p className="warn">ERROR: {error}</p>}
-    <div className="actions">{!session&&user&&<Button theme="primary" onClick={start}>● 开始录音</Button>}{active&&<><Button theme="danger" onClick={stop}>■ 停止并整理</Button><Button onClick={speak}>朗读最近译文</Button></>}{session?.status==="draft_ready"&&<><Button onClick={requestOrganize}>AI 重新整理</Button><Button theme="primary" disabled={session.draft_source!=="qwen_mcp"} onClick={requestPublish}>确认并发布</Button><Button onClick={()=>setSession(null)}>暂存并返回</Button></>}</div>
+    <div className="actions">{!session&&user&&<Button theme="primary" onClick={start}>● 开始录音</Button>}{active&&<><Button theme="danger" onClick={stop}>{capture.current?"■ 停止并整理":"↻ 重试停止并整理"}</Button><Button onClick={speak}>朗读最近译文</Button></>}{session?.status==="draft_ready"&&<><Button onClick={requestOrganize}>AI 重新整理</Button><Button theme="primary" disabled={session.draft_source!=="qwen_mcp"} onClick={requestPublish}>确认并发布</Button><Button onClick={()=>setSession(null)}>暂存并返回</Button></>}</div>
     {publishOpen&&<div className="dialog-backdrop" role="presentation" onMouseDown={e=>{if(e.target===e.currentTarget&&!publishing)setPublishOpen(false)}}><section className="dialog publish-dialog" role="dialog" aria-modal="true" aria-labelledby="publish-dialog-title">
       <div className="bar"><span id="publish-dialog-title">OBSIDIAN_PUBLISH // FINAL_CHECK</span><button className="dialog-close" aria-label="关闭" disabled={publishing} onClick={()=>setPublishOpen(false)}>×</button></div>
       <div className="dialog-content"><div className="dialog-status"><span className="pulse">●</span><div><strong>发布前核对文件名与笔记属性</strong><small>日期已按录制时所在时区自动填写。确认后才会写入 Obsidian。</small></div></div>
