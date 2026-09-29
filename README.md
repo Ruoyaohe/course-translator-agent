@@ -127,7 +127,7 @@ OBSIDIAN_NOTES_ROOT=Note/课程记录
 
 ```bash
 source .venv311/bin/activate
-uvicorn services.api.app.main:app --host 127.0.0.1 --port 8890
+python -m uvicorn services.api.app.main:app --host 127.0.0.1 --port 8890
 ```
 
 另开一个终端启动 PWA：

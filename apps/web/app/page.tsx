@@ -15,8 +15,16 @@ type AudioInput = { deviceId:string; label:string };
 type PublishForm = { date:string; filename:string; note_type:string; category:string; format:string; tags:string };
 
 async function api(path:string, init?:RequestInit) {
-  const response = await fetch(`${API}${path}`, {...init, credentials:"include"});
-  if (!response.ok) throw new Error((await response.json()).detail || response.statusText);
+  let response:Response;
+  try {
+    response = await fetch(`${API}${path}`, {...init, credentials:"include"});
+  } catch {
+    throw new Error(`无法连接本地 API（${API}），请重新启动项目服务`);
+  }
+  if (!response.ok) {
+    const payload=await response.json().catch(()=>null) as {detail?:string}|null;
+    throw new Error(payload?.detail||response.statusText);
+  }
   return response.json();
 }
 
@@ -59,7 +67,7 @@ export default function Home() {
   }
   async function flushAll(id:string):Promise<boolean> {
     if(flushPromise.current)return flushPromise.current;
-    const task=(async()=>{setUploading(true);try{for(const p of await pendingParts(id))await flush(p);setTransport(socket.current?.readyState===1?"live":"retrying");return true}catch(e){setTransport("retrying");setError(`音频上传暂时失败：${e instanceof Error?e.message:String(e)}。录音仍保存在本机，可点击“重试停止并整理”。`);return false}finally{setUploading(false);flushPromise.current=null}})();
+    const task=(async()=>{setUploading(true);try{for(const p of await pendingParts(id))await flush(p);setTransport("live");setError("");return true}catch(e){setTransport("retrying");setError(`音频上传暂时失败：${e instanceof Error?e.message:String(e)}。录音仍保存在本机，可点击“重试停止并整理”。`);return false}finally{setUploading(false);flushPromise.current=null}})();
     flushPromise.current=task;return task;
   }
 
