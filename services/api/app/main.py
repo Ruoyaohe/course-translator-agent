@@ -97,7 +97,10 @@ async def upload_part(session_id: str, sequence: int, sha256: str, audio: Upload
         session.parts = sorted([*session.parts, sequence])
     caption = next((item for item in session.transcript if item.id == f"seg-{sequence:04d}"), None)
     if caption is None and getattr(provider, "captions_from_upload", False):
-        caption = await provider.caption_audio(target, sequence, session.source_language)
+        try:
+            caption = await provider.caption_audio(target, sequence, session.source_language)
+        except RuntimeError as exc:
+            raise HTTPException(503, str(exc)) from exc
         session.transcript.append(caption)
         session.transcript.sort(key=lambda item: item.start_ms)
     session.updated_at = now_iso()

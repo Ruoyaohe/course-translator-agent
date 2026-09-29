@@ -113,6 +113,7 @@ QWEN_TEXT_MODEL=qwen3.7-flash
 # local：本地语音识别 + 千问课程整理
 COURSE_PROVIDER=local
 LOCAL_MODEL_ROOT=/absolute/path/to/your/local-asr-models
+MULTILINGUAL_WHISPER_MODEL=/absolute/path/to/your/local-asr-models/models/whisper-base
 
 # 你的本地 Obsidian Vault 绝对路径
 OBSIDIAN_REPO_PATH=/absolute/path/to/your/obsidian-vault

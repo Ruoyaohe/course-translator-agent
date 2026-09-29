@@ -6,6 +6,7 @@ import urllib.request
 import asyncio
 import sys
 import re
+import threading
 from pathlib import Path
 from .models import CourseDraft, Evidence, MindMapNode, ScheduleItem, TranscriptSegment
 from .pricing import SYSTEM_PROMPT
@@ -98,7 +99,11 @@ class LocalCourseProvider(MockCourseProvider):
         from engine import Models
         self.models = Models()
         self.multilingual_asr = None
-        self.multilingual_model = os.environ.get("MULTILINGUAL_WHISPER_MODEL", "base")
+        bundled_multilingual = model_root / "models" / "whisper-base"
+        self.multilingual_model = os.environ.get("MULTILINGUAL_WHISPER_MODEL",
+            str(bundled_multilingual) if bundled_multilingual.exists() else "base")
+        self.multilingual_lock = threading.Lock()
+        self.multilingual_load_error: str | None = None
         self.ai = QwenCourseProvider() if os.environ.get("DASHSCOPE_API_KEY") else None
         self.draft_source = "qwen_mcp" if self.ai else "ai_unconfigured"
 
@@ -108,9 +113,21 @@ class LocalCourseProvider(MockCourseProvider):
         if source_language == "en":
             source, translation, _, _ = self.models.process(audio)
         else:
-            if self.multilingual_asr is None:
-                from faster_whisper import WhisperModel
-                self.multilingual_asr = WhisperModel(self.multilingual_model, device="cpu", compute_type="int8", cpu_threads=4, num_workers=1)
+            with self.multilingual_lock:
+                if self.multilingual_load_error:
+                    raise RuntimeError(self.multilingual_load_error)
+                if self.multilingual_asr is None:
+                    try:
+                        from faster_whisper import WhisperModel
+                        self.multilingual_asr = WhisperModel(self.multilingual_model, device="cpu",
+                            compute_type="int8", cpu_threads=4, num_workers=1,
+                            local_files_only=Path(self.multilingual_model).exists())
+                    except Exception as exc:
+                        self.multilingual_load_error = (
+                            "多语言语音模型尚未安装。请运行项目启动脚本完成模型下载，"
+                            f"或设置 MULTILINGUAL_WHISPER_MODEL。本次错误：{exc}"
+                        )
+                        raise RuntimeError(self.multilingual_load_error) from exc
             language = None if source_language == "auto" else source_language
             segments, info = self.multilingual_asr.transcribe(audio, language=language, beam_size=1,
                 temperature=0, condition_on_previous_text=False, vad_filter=False, without_timestamps=True)
