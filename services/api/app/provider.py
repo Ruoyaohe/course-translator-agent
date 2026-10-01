@@ -26,7 +26,7 @@ class MockCourseProvider:
         return TranscriptSegment(id=f"seg-{sequence:04d}", start_ms=start, end_ms=start + 4500,
                                  source=source, translation=translation)
 
-    async def caption_audio(self, path: Path, sequence: int, source_language: str = "auto") -> TranscriptSegment:
+    async def caption_audio(self, path: Path, sequence: int, source_language: str = "auto", hotwords: list[str] | None = None) -> TranscriptSegment:
         return await self.live_caption(sequence)
 
     async def finalize(self, transcript: list[TranscriptSegment], course: str) -> CourseDraft:
@@ -77,11 +77,18 @@ class QwenCourseProvider(MockCourseProvider):
     async def finalize(self, transcript: list[TranscriptSegment], course: str) -> CourseDraft:
         return await asyncio.to_thread(self._finalize, transcript, course)
 
-    def translate_to_chinese(self, text: str, source_language: str = "auto") -> str:
+    def translate_to_chinese(self, text: str, source_language: str = "auto", hotwords: list[str] | None = None) -> str:
         if not text.strip():
             return ""
+        glossary = "、".join(term.strip() for term in (hotwords or []) if term.strip())
+        instruction = (
+            "将英语课堂语音转写准确翻译成自然、简洁的中文。只输出译文，不解释。"
+            "忠实保留人名、作品名、专业术语、否定关系、日期、时间和数字；不要补充原文没有的信息。"
+        )
+        if glossary:
+            instruction += f"本节课术语表：{glossary}。遇到近音词时优先参考术语表，并保留必要的英文原词。"
         payload = json.dumps({"model": self.model, "messages": [
-            {"role": "system", "content": "将课堂语音转写准确翻译成简洁中文。只输出译文，不解释。保留人名、术语、日期和数字。"},
+            {"role": "system", "content": instruction},
             {"role": "user", "content": text}], "temperature": 0}).encode()
         request = urllib.request.Request("https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
             data=payload, headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"})
@@ -100,16 +107,22 @@ class LocalCourseProvider(MockCourseProvider):
         self.ai = QwenCourseProvider() if os.environ.get("DASHSCOPE_API_KEY") else None
         self.draft_source = "qwen_mcp" if self.ai else "ai_unconfigured"
 
-    def _caption(self, path: Path, sequence: int, source_language: str) -> TranscriptSegment:
+    def _caption(self, path: Path, sequence: int, source_language: str, hotwords: list[str] | None = None) -> TranscriptSegment:
         from faster_whisper.audio import decode_audio
         audio = decode_audio(str(path), sampling_rate=16000)
-        source, translation, _, _ = self.models.process(audio)
+        source, translation, _, _ = self.models.process(audio, hotwords=hotwords)
+        if source and self.ai and os.environ.get("REALTIME_TRANSLATION_PROVIDER", "qwen").lower() == "qwen":
+            try:
+                translation = self.ai.translate_to_chinese(source, source_language, hotwords)
+            except Exception:
+                # Keep captions available when the network or paid provider is unavailable.
+                pass
         start = sequence * 3000
         return TranscriptSegment(id=f"seg-{sequence:04d}", start_ms=start, end_ms=start + 3000,
                                  source=source or "[未识别到清晰语音]", translation=translation)
 
-    async def caption_audio(self, path: Path, sequence: int, source_language: str = "auto") -> TranscriptSegment:
-        return await asyncio.to_thread(self._caption, path, sequence, source_language)
+    async def caption_audio(self, path: Path, sequence: int, source_language: str = "auto", hotwords: list[str] | None = None) -> TranscriptSegment:
+        return await asyncio.to_thread(self._caption, path, sequence, source_language, hotwords)
 
     async def finalize(self, transcript: list[TranscriptSegment], course: str) -> CourseDraft:
         if self.ai:

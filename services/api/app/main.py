@@ -98,7 +98,7 @@ async def upload_part(session_id: str, sequence: int, sha256: str, audio: Upload
     caption = next((item for item in session.transcript if item.id == f"seg-{sequence:04d}"), None)
     if caption is None and getattr(provider, "captions_from_upload", False):
         try:
-            caption = await provider.caption_audio(target, sequence, session.source_language)
+            caption = await provider.caption_audio(target, sequence, session.source_language, session.hotwords)
         except RuntimeError as exc:
             raise HTTPException(503, str(exc)) from exc
         session.transcript.append(caption)

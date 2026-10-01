@@ -30,6 +30,8 @@ AI 整理不是免费的。你需要自行开通阿里云百炼、创建 API Key
 
 ```dotenv
 QWEN_TEXT_MODEL=qwen3.7-flash
+# 实时英文识别仍在本地；短句中文翻译使用 Qwen，提高术语和句意准确率
+REALTIME_TRANSLATION_PROVIDER=qwen
 QWEN_REGION=singapore
 ```
 
@@ -146,6 +148,8 @@ COURSE_PROVIDER=mock
 ```
 
 Mock 模式不会调用千问，也不会产生模型费用。
+
+实时模式会把本地识别出的短段英文发送给 Qwen3.7-Flash 翻译，并产生少量文本 Token 费用。若希望完全离线，可将 `REALTIME_TRANSLATION_PROVIDER` 改为 `local`；此时会回退到本地英中模型，译文准确率通常较低。课程准备页中的 `HOTWORDS` 会同时用于英文识别与中文翻译，建议填写课程名、人名、作品名和专业术语。
 
 ## 使用流程
 
